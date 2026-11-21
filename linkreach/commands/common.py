@@ -50,6 +50,21 @@ class Ctx:
         return self.inputs.config
 
 
+CONNECT_COMMANDS = ("send", "sync")
+
+
+def refuse_if_manual(ctx: Ctx, command: str) -> int | None:
+    """ADR-0001: `send` and `sync` only run with `connect_mode: automated`.
+    Returns an exit code to refuse with, or None when the command may run."""
+    if ctx.cfg.connect_mode == "automated":
+        return None
+    ctx.db.log(command, "info", None, "refused: connect_mode is manual")
+    console.print(f"[bold red]`linkreach {command}` is switched off.[/] linkreach no longer sends connection requests;")
+    console.print("you send them yourself on LinkedIn. To turn the automated path back on, set")
+    console.print("[bold]connect_mode: automated[/] in config.yaml (see docs/adr/0001).")
+    return EXIT_REFUSED
+
+
 def run_start(db: DB, command: str, detail: str = "start") -> None:
     db.log(command, "run", None, detail)
     logsetup.event(log, "run start", command=command, detail=detail)

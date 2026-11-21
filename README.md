@@ -72,13 +72,15 @@ linkreach never asks for, reads, or stores your LinkedIn password. `login` opens
 
 ## Daily use
 
+> **Sending is switched off by default.** With `connect_mode: manual` (the default in `config.yaml`), linkreach doesn't send connection requests: `send` and `sync` are hidden from `--help` and refuse to run. You send requests yourself on LinkedIn. Set `connect_mode: automated` to bring the old automated path back (see `docs/adr/0001-no-automated-connection-requests.md`); the `send` and `sync` lines below and the rollout plan above only apply then.
+
 ```bash
 linkreach collect --dry-run   # see the planned searches; opens nothing
 linkreach collect             # alumni pass, then each bucket, companies in priority order
 linkreach draft               # Claude writes a note + follow-up for each `collected` person
 linkreach review              # a approve · e edit in $EDITOR · d add detail + redraft · s skip · q quit
-linkreach send                # manual: shows each note, Enter sends, s skips, q quits
-linkreach sync                # every few days: marks 1st-degree connections `accepted`
+linkreach send                # connect_mode: automated only. Shows each note, Enter sends, s skips, q quits
+linkreach sync                # connect_mode: automated only. Every few days: marks 1st-degree connections `accepted`
 linkreach dashboard           # http://127.0.0.1:8765, opens in your browser
 linkreach mark 42 replied     # accepted | followed_up | replied | meeting | referral | dead
 linkreach list --status sent
@@ -104,6 +106,8 @@ The strip under the header shows what the tool is doing right now (for example "
 On Windows, `e` opens Notepad unless you set `EDITOR` (for example `$env:EDITOR = "code --wait"`).
 
 ## Scheduling `send --auto`
+
+Only applies with `connect_mode: automated`. With the default, `manual`, a scheduled `send --auto` exits with code 7 and sends nothing.
 
 `send --auto` runs `doctor` first and aborts on any failure. It only sends inside `auto_window` (default weekdays 9:00 to 18:00 local) and refuses to run while the brake is tripped unless you pass `--override-brake`. One run per weekday is enough: each run sends up to the daily cap.
 

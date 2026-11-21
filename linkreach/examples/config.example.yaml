@@ -1,5 +1,10 @@
 # linkreach configuration. Every field is validated at startup.
 
+# Connection requests: you send them yourself by default. `manual` hides and blocks
+# the `send` and `sync` commands. `automated` turns the old automated send path back
+# on (it's dormant and not kept up to date; see docs/adr/0001).
+connect_mode: manual     # manual | automated
+
 # Hard caps. You may lower these; values above 40 / 20 / 80 are rejected.
 caps:
   daily_views: 40        # profile + search page loads per local day

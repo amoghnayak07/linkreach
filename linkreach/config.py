@@ -117,7 +117,12 @@ class Templates(Strict):
         return v
 
 
+ConnectMode = Literal["manual", "automated"]
+
+
 class Config(Strict):
+    # ADR-0001: automated connection requests are off unless this is "automated".
+    connect_mode: ConnectMode = "manual"
     caps: Caps = Caps()
     per_company_limit: int = Field(6, ge=1, le=50)
     combine_keywords: bool = True  # one search per bucket ("a" OR "b") instead of one per keyword

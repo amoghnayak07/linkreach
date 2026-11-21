@@ -6,12 +6,13 @@ from linkreach.commands import send
 from linkreach.commands.common import EXIT_DOCTOR, EXIT_REFUSED
 from linkreach.safety import CapReached, brake_status, check_request_caps
 
-from tests.conftest import base_session, freeze_weekday_morning
+from tests.conftest import base_session, freeze_weekday_morning, use_config
 from tests.helpers import add_approved, add_old_sent, profile_for, send_events
 
 
 @pytest.fixture(autouse=True)
 def _clock(env):
+    use_config(env)  # connect_mode: automated; the send path is off by default
     freeze_weekday_morning()  # after env, which resets the clock
 
 
@@ -132,10 +133,7 @@ def test_auto_aborts_when_doctor_selectors_fail(env):
 
 
 def test_auto_outside_window_refuses(env):
-    from tests.conftest import write_inputs
-
-    write_inputs(env.inputs_dir, {"auto_window": {"days": ["sat"], "start": "09:00", "end": "18:00"}})
-    env.reload()
+    use_config(env, {"auto_window": {"days": ["sat"], "start": "09:00", "end": "18:00"}})
     add_approved(env, "jane")
     s = base_session()
     page = profile_for(s, "jane")

@@ -76,6 +76,14 @@ def write_inputs(d: Path, overrides: dict | None = None) -> None:
     )
 
 
+def use_config(env: Env, overrides: dict | None = None, automated: bool = True) -> None:
+    """Rewrite config.yaml with overrides and reload. Defaults to `connect_mode: automated`,
+    which the dormant send/sync path needs to run (ADR-0001)."""
+    merged = {"connect_mode": "automated" if automated else "manual", **(overrides or {})}
+    write_inputs(env.inputs_dir, merged)
+    env.reload()
+
+
 @pytest.fixture
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     home = tmp_path / "home"

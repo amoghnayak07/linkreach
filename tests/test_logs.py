@@ -8,7 +8,7 @@ from linkreach import logsetup, paths
 from linkreach.commands import collect, review, send
 from linkreach.drafting import Drafter, run_draft
 
-from tests.conftest import FAKE_KEY, base_session, freeze_weekday_morning
+from tests.conftest import FAKE_KEY, base_session, freeze_weekday_morning, use_config
 from tests.fakes import FakeClaude, search_page
 from tests.helpers import profile_for, url
 
@@ -18,6 +18,7 @@ def all_logs() -> str:
 
 
 def test_full_run_logs_are_clean(env):
+    use_config(env)  # connect_mode: automated, so the run reaches send
     freeze_weekday_morning()
     s = base_session()
     s.default = search_page("x", [])

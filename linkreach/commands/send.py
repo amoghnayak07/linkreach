@@ -20,6 +20,7 @@ from linkreach.commands.common import (
     console,
     handle_run_errors,
     linkedin_session,
+    refuse_if_manual,
 )
 from linkreach.safety import CapReached, brake_status, check_request_caps, in_auto_window
 
@@ -44,6 +45,9 @@ def candidates(ctx: Ctx) -> list:
 
 
 def run(ctx: Ctx, auto: bool = False, override_brake: bool = False) -> int:
+    refused = refuse_if_manual(ctx, "send")
+    if refused is not None:
+        return refused
     cfg = ctx.cfg
     brake = brake_status(ctx.db, cfg)
     if brake.tripped:

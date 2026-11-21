@@ -143,6 +143,8 @@ def pause(title: str, explain: str) -> None:
 def main() -> int:
     logsetup.setup()
     inputs = load_inputs(DEMO_HOME)
+    # The demo walks through the dormant send/sync steps, so opt in (ADR-0001).
+    inputs.config = inputs.config.model_copy(update={"connect_mode": "automated"})
     db = DB.open(DEMO_HOME / "linkreach.db")
     fake_claude = FakeClaude(responder)
     ctx = Ctx(

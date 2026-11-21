@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from rich.markup import escape
 
-from linkreach.commands.common import Ctx, FailStreak, console, handle_run_errors, linkedin_session
+from linkreach.commands.common import Ctx, FailStreak, console, handle_run_errors, linkedin_session, refuse_if_manual
 
 
 def run(ctx: Ctx) -> int:
+    refused = refuse_if_manual(ctx, "sync")
+    if refused is not None:
+        return refused
     rows = ctx.db.people(["sent"])
     rows.sort(key=lambda r: (r["sent_at"] or "", r["id"]))
     if not rows:

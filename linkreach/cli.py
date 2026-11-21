@@ -9,12 +9,30 @@ from pathlib import Path
 from rich.markup import escape
 
 from linkreach import __version__, logsetup, paths
-from linkreach.commands.common import EXIT_CONFIG, Ctx, console
+from linkreach.commands.common import CONNECT_COMMANDS, EXIT_CONFIG, Ctx, console
 from linkreach.config import ConfigError, load_inputs
 from linkreach.db import DB, STATUSES
 
 
-def build_parser() -> argparse.ArgumentParser:
+def peek_connect_mode(argv: list[str] | None) -> str:
+    """Read `connect_mode` from config.yaml before full validation, so help text can
+    hide `send` and `sync`. Anything unreadable counts as the default, manual."""
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--inputs", type=Path)
+    known, _ = pre.parse_known_args(argv)
+    directory = known.inputs.resolve() if known.inputs else paths.inputs_dir()
+    try:
+        import yaml
+
+        raw = yaml.safe_load((directory / "config.yaml").read_text(encoding="utf-8"))
+    except Exception:
+        return "manual"
+    if isinstance(raw, dict) and raw.get("connect_mode") == "automated":
+        return "automated"
+    return "manual"
+
+
+def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="linkreach", description="LinkedIn outreach with hard safety rails.")
     p.add_argument("--version", action="version", version=f"linkreach {__version__}")
     p.add_argument("--inputs", type=Path, help="folder holding config.yaml, companies.csv, jobs.csv (default: current folder)")
@@ -44,11 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="check selectors, login, API key, caps, and DB")
     pg = sub.add_parser("purge", help="delete dead/skipped people older than N days")
     pg.add_argument("--older-than", default="180d", help="age like 180d (default 180d)")
+    if connect_mode != "automated":
+        # Still parseable (so they can refuse with a clear message), just not listed.
+        sub._choices_actions = [a for a in sub._choices_actions if a.dest not in CONNECT_COMMANDS]
     return p
 
 
 def main(argv: list[str] | None = None, ctx_overrides: dict | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    args = build_parser(peek_connect_mode(argv)).parse_args(argv)
     logsetup.setup(args.verbose)
     if args.inputs:
         import os
