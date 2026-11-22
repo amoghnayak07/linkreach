@@ -57,6 +57,18 @@ ACCEPTED_OR_LATER = {"accepted", "followed_up", "replied", "meeting", "referral"
 
 EVENTS = {"view", "send", "fail", "stop", "captcha", "selector_broken", "run", "info"}
 
+# Outreach progress per Pick (one Person for one Job). linkreach sets statuses up to
+# drafted / no_email / needs_detail; the user sets the rest with `mark` (ticket 04).
+PICK_STATUSES = [
+    "picked", "drafted", "no_email", "needs_detail",
+    "emailed", "connected", "replied", "meeting", "referral", "dead",
+]
+PICK_AUTO_TRANSITIONS: dict[str, set[str]] = {
+    "picked": {"drafted", "no_email", "needs_detail", "dead"},
+    "needs_detail": {"drafted", "no_email", "dead"},
+}
+PICK_ORIGINS = ("supplied", "found")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS people (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,9 +113,44 @@ CREATE TABLE IF NOT EXISTS status_history (
     old_status TEXT,
     new_status TEXT NOT NULL,
     changed_at TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('cli', 'dashboard', 'sync'))
+    source TEXT NOT NULL CHECK (source IN ('cli', 'dashboard', 'sync')),
+    pick_id INTEGER              -- set when the change is to a Pick, not the person-level status
 );
 CREATE INDEX IF NOT EXISTS idx_history_person ON status_history(person_id);
+
+-- One role at one company, created from a pasted job description.
+CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company TEXT NOT NULL,
+    role_title TEXT,
+    team TEXT,
+    location TEXT,
+    description TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- A Person chosen for a Job. Outreach progress lives here, not on the person.
+CREATE TABLE IF NOT EXISTS picks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES jobs(id),
+    person_id INTEGER NOT NULL REFERENCES people(id),
+    origin TEXT NOT NULL CHECK (origin IN ('supplied', 'found')),
+    tier TEXT,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'picked',
+    email TEXT,
+    email_subject TEXT,
+    email_body TEXT,
+    connection_note TEXT,
+    validation_errors TEXT,
+    user_detail TEXT,
+    gmail_draft_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (job_id, person_id)
+);
+CREATE INDEX IF NOT EXISTS idx_picks_job ON picks(job_id);
+CREATE INDEX IF NOT EXISTS idx_picks_person ON picks(person_id);
 
 CREATE TABLE IF NOT EXISTS activity_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,6 +174,14 @@ CREATE TABLE IF NOT EXISTS company_ids (
 
 class TransitionError(ValueError):
     pass
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring databases created before Jobs and Picks up to date."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(status_history)")}
+    if "pick_id" not in cols:
+        conn.execute("ALTER TABLE status_history ADD COLUMN pick_id INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_history_pick ON status_history(pick_id)")
 
 
 def normalize_profile_url(url: str) -> str:
@@ -157,6 +212,7 @@ class DB:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
         paths.secure_file(path)
         for suffix in ("-wal", "-shm"):
@@ -304,10 +360,11 @@ class DB:
             self._history(person_id, old, new_status, source)
         self.conn.commit()
 
-    def _history(self, person_id: int, old: str | None, new: str, source: str) -> None:
+    def _history(self, person_id: int, old: str | None, new: str, source: str, pick_id: int | None = None) -> None:
         self.conn.execute(
-            "INSERT INTO status_history (person_id, old_status, new_status, changed_at, source) VALUES (?, ?, ?, ?, ?)",
-            (person_id, old, new, clock.now_iso(), source),
+            "INSERT INTO status_history (person_id, old_status, new_status, changed_at, source, pick_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (person_id, old, new, clock.now_iso(), source, pick_id),
         )
 
     def history(self, person_id: int) -> list[sqlite3.Row]:
@@ -316,6 +373,109 @@ class DB:
                 "SELECT * FROM status_history WHERE person_id = ? ORDER BY id", (person_id,)
             )
         )
+
+    # ---------- jobs ----------
+    def add_job(self, company: str, description: str, role_title: str = "", team: str = "", location: str = "") -> int:
+        cur = self.conn.execute(
+            "INSERT INTO jobs (company, role_title, team, location, description, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (company, role_title or None, team or None, location or None, description, clock.now_iso()),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def get_job(self, job_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+    # ---------- picks ----------
+    def ensure_person(self, profile_url: str, name: str, company: str) -> int:
+        """Id of the Person with this profile, creating them if new. A known Person is reused
+        as is, so their history across Jobs stays in one place."""
+        url = normalize_profile_url(profile_url)
+        row = self.conn.execute("SELECT id FROM people WHERE profile_url = ?", (url,)).fetchone()
+        if row is not None:
+            return int(row["id"])
+        pid = self.add_person(name=name, company=company, profile_url=url)
+        assert pid is not None
+        return pid
+
+    def add_pick(self, job_id: int, person_id: int, origin: str, tier: str | None = None, reason: str | None = None) -> int | None:
+        """New Pick in status `picked`. Returns None if this Person is already a Pick for this Job."""
+        if origin not in PICK_ORIGINS:
+            raise ValueError(f"unknown pick origin {origin!r}")
+        now = clock.now_iso()
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO picks (job_id, person_id, origin, tier, reason, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'picked', ?, ?)",
+            (job_id, person_id, origin, tier, reason, now, now),
+        )
+        if cur.rowcount == 0:
+            self.conn.commit()
+            return None
+        pick_id = int(cur.lastrowid or 0)
+        self._history(person_id, None, "picked", "cli", pick_id=pick_id)
+        self.conn.commit()
+        return pick_id
+
+    def get_pick(self, pick_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT picks.*, people.name, people.title, people.company, people.profile_url, people.is_alumni, "
+            "people.context_1, people.context_2 FROM picks JOIN people ON people.id = picks.person_id WHERE picks.id = ?",
+            (pick_id,),
+        ).fetchone()
+
+    def picks(self, job_id: int, statuses: Iterable[str] | None = None) -> list[sqlite3.Row]:
+        sql = (
+            "SELECT picks.*, people.name, people.title, people.company, people.profile_url, people.is_alumni, "
+            "people.context_1, people.context_2 FROM picks JOIN people ON people.id = picks.person_id "
+            "WHERE picks.job_id = ?"
+        )
+        args: list[Any] = [job_id]
+        if statuses is not None:
+            statuses = list(statuses)
+            sql += f" AND picks.status IN ({', '.join('?' for _ in statuses)})"
+            args += statuses
+        return list(self.conn.execute(sql + " ORDER BY picks.id", args))  # nosec B608 - placeholders only
+
+    def update_pick(self, pick_id: int, **fields: Any) -> None:
+        allowed = {
+            "tier", "reason", "email", "email_subject", "email_body", "connection_note",
+            "validation_errors", "user_detail", "gmail_draft_id",
+        }
+        bad = set(fields) - allowed
+        if bad:
+            raise ValueError(f"unknown field(s): {bad}")
+        if not fields:
+            return
+        fields["updated_at"] = clock.now_iso()
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        self.conn.execute(
+            f"UPDATE picks SET {sets} WHERE id = ?",  # nosec B608 - keys checked against allowlist
+            (*fields.values(), pick_id),
+        )
+        self.conn.commit()
+
+    def set_pick_status(self, pick_id: int, new_status: str, source: str = "cli", **fields: Any) -> None:
+        """Move a Pick along the automatic part of its lifecycle, writing status_history."""
+        if new_status not in PICK_STATUSES:
+            raise TransitionError(f"unknown pick status {new_status!r}")
+        row = self.conn.execute("SELECT status, person_id FROM picks WHERE id = ?", (pick_id,)).fetchone()
+        if row is None:
+            raise TransitionError(f"no pick with id {pick_id}")
+        old = row["status"]
+        if new_status != old and new_status not in PICK_AUTO_TRANSITIONS.get(old, set()):
+            raise TransitionError(f"cannot move a pick from {old} to {new_status}")
+        if fields:
+            self.update_pick(pick_id, **fields)
+        if new_status == old:
+            return
+        self.conn.execute(
+            "UPDATE picks SET status = ?, updated_at = ? WHERE id = ?", (new_status, clock.now_iso(), pick_id)
+        )
+        self._history(int(row["person_id"]), old, new_status, source, pick_id=pick_id)
+        self.conn.commit()
+
+    def pick_history(self, pick_id: int) -> list[sqlite3.Row]:
+        return list(self.conn.execute("SELECT * FROM status_history WHERE pick_id = ? ORDER BY id", (pick_id,)))
 
     # ---------- openers ----------
     def add_opener(self, person_id: int, text: str) -> None:
@@ -354,7 +514,8 @@ class DB:
         ids = [
             r[0]
             for r in self.conn.execute(
-                "SELECT id FROM people WHERE status IN ('dead', 'skipped') AND COALESCE(updated_at, collected_at) < ?",
+                "SELECT id FROM people WHERE status IN ('dead', 'skipped') AND COALESCE(updated_at, collected_at) < ? "
+                "AND id NOT IN (SELECT person_id FROM picks)",  # a Person with Picks keeps their history
                 (cutoff,),
             )
         ]

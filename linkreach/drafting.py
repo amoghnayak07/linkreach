@@ -18,7 +18,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
-from linkreach import credentials, logsetup, sanitize, validate
+from linkreach import llm, logsetup, sanitize, validate
 from linkreach.config import Config, Inputs
 from linkreach.db import DB
 
@@ -26,7 +26,7 @@ log = logsetup.get("draft")
 
 MAX_PARALLEL = 5
 MAX_TRIES = 3
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
+FALLBACK_BETA = llm.FALLBACK_BETA
 
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -215,14 +215,7 @@ def assemble(cfg: Config, row: Any, parts: dict[str, Any]) -> tuple[str, str]:
     return note.strip(), followup.strip()
 
 
-def make_client() -> Any:
-    import anthropic
-
-    key = credentials.api_key()
-    if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY not found (run `linkreach set-key` or add it to .env)")
-    # The SDK retries 408/409/429/5xx and connection errors with exponential backoff.
-    return anthropic.Anthropic(api_key=key, max_retries=6, timeout=120.0)
+make_client = llm.make_client
 
 
 class Drafter:
@@ -237,35 +230,7 @@ class Drafter:
         return self._client
 
     def _call(self, system: list[dict[str, Any]], user: str) -> dict[str, Any]:
-        kwargs: dict[str, Any] = dict(
-            model=self.cfg.model,
-            max_tokens=8000,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
-        )
-        if self.cfg.use_refusal_fallbacks:
-            kwargs["betas"] = [FALLBACK_BETA]
-            kwargs["fallbacks"] = "default"
-        resp = self.client.beta.messages.create(**kwargs)
-        if getattr(resp, "stop_reason", None) == "refusal":
-            raise ValueError("model declined to write this draft")
-        text = next((b.text for b in resp.content if getattr(b, "type", "") == "text"), "")
-        usage = getattr(resp, "usage", None)
-        if usage is not None:
-            logsetup.event(
-                log,
-                "api call",
-                model=self.cfg.model,
-                input_tokens=getattr(usage, "input_tokens", None),
-                cache_read=getattr(usage, "cache_read_input_tokens", None),
-                cache_write=getattr(usage, "cache_creation_input_tokens", None),
-                output_tokens=getattr(usage, "output_tokens", None),
-            )
-        data = json.loads(text)
-        if not isinstance(data, dict):
-            raise ValueError("model returned non-object JSON")
-        return data
+        return llm.structured_call(self.client, self.cfg, system, user, OUTPUT_SCHEMA)
 
     def draft(self, row: Any, recent_openers: list[str]) -> DraftOutcome:
         cfg = self.cfg

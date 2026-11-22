@@ -263,3 +263,52 @@ class FakeClaude:
 
     def user_text(self, i: int = -1) -> str:
         return self.calls[i]["messages"][0]["content"]
+
+    def calls_for(self, kind: str) -> list[dict[str, Any]]:
+        """Calls of one kind in the Job flow: "extract" or "email"."""
+        return [kw for kw in self.calls if request_kind(kw) == kind]
+
+
+# ---------------- fake Claude for the Job flow ----------------
+RESUME = "https://example.com/naveen-resume.pdf"  # conftest's resume_url
+
+GOOD_JOB_FIELDS = {"company": "Microsoft", "role_title": "Product Manager II", "team": "Azure Core", "location": "Redmond, WA"}
+
+GOOD_EMAIL = {
+    "subject": "Product Manager II - Naveen Murali",
+    "body": (
+        "Hi Jane,\n\nYour Azure onboarding post made YAML sound almost fun, and it maps to the Product Manager II "
+        "role on your team.\n\nAt Bizom I owned an AI-enabled ERP platform across 15+ clients and shipped an "
+        "image-recognition module that lifted conversion by 25%.\n\nWould you have 15 minutes to talk about what "
+        f"the team needs? My resume: {RESUME}\n\nBest,\nNaveen"
+    ),
+    "connection_note": "Hi Jane, I'm applying for the Product Manager II role on your team and loved your Azure onboarding post. I'd like to connect.",
+}
+
+
+def request_kind(kw: dict) -> str:
+    props = kw["output_config"]["format"]["schema"]["properties"]
+    if "company" in props:
+        return "extract"
+    if "connection_note" in props:
+        return "email"
+    return "legacy"
+
+
+def job_responder(
+    fields: dict | Callable[[dict], dict] | None = None,
+    email: dict | Callable[[dict], dict] | None = None,
+) -> Callable[[dict], dict]:
+    """Answers Job extraction with `fields` and drafting with `email` (dicts or callables)."""
+
+    def answer(kw: dict) -> dict:
+        kind = request_kind(kw)
+        if kind == "extract":
+            f = fields if fields is not None else GOOD_JOB_FIELDS
+            return f(kw) if callable(f) else dict(f)
+        if kind == "email":
+            e = email if email is not None else GOOD_EMAIL
+            return e(kw) if callable(e) else dict(e)
+        return dict(GOOD_PARTS)
+
+    return answer

@@ -136,7 +136,8 @@ class Config(Strict):
     banned_phrases: list[str] = Field(default_factory=lambda: list(DEFAULT_BANNED_PHRASES))
     model: str = "claude-sonnet-5-5"
     use_refusal_fallbacks: bool = True
-    note_max_chars: int = Field(280, ge=50, le=300)
+    # Connection note limit: 200 for a free LinkedIn account, 300 with Premium.
+    note_max_chars: int = Field(200, ge=50, le=300)
     followup_max_words: int = Field(150, ge=50, le=400)
     follow_up_delay_days: int = Field(5, ge=1)
     brake: Brake = Brake()

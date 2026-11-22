@@ -26,6 +26,14 @@ def inputs_dir() -> Path:
     return Path(override).expanduser() if override else Path.cwd()
 
 
+STYLE_FILE = "style.md"
+
+
+def style_path() -> Path:
+    """The user's Style file, next to config.yaml (gitignored)."""
+    return inputs_dir() / STYLE_FILE
+
+
 def db_path() -> Path:
     return home() / "linkreach.db"
 

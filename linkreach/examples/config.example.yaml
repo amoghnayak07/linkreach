@@ -53,7 +53,7 @@ background: |
   - Builds independent AI projects (RAG/LangChain agents, credit risk models with
     SHAP/XGBoost)
 
-# The follow-up message links to this, since the tool can't attach files to LinkedIn DMs.
+# Email drafts (and the old follow-up message) link to this instead of attaching a file.
 resume_url: https://example.com/naveen-murali-resume.pdf   # CHANGE ME
 
 banned_phrases: [synergy, leverage, passionate about disrupting, circle back, i hope this finds you well]
@@ -61,7 +61,7 @@ banned_phrases: [synergy, leverage, passionate about disrupting, circle back, i 
 model: claude-sonnet-5-5
 use_refusal_fallbacks: true   # server-side fallback if the model declines a request
 
-note_max_chars: 280           # LinkedIn's limit is 300
+note_max_chars: 200           # connection note limit: 200 on a free LinkedIn account, 300 with Premium
 followup_max_words: 150
 follow_up_delay_days: 5
 

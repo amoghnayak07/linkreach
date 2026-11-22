@@ -15,6 +15,7 @@ linkreach_people.csv
 /config.yaml
 /companies.csv
 /jobs.csv
+/style.md
 
 # python
 __pycache__/

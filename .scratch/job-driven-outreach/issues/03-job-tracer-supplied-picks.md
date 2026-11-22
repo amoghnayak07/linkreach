@@ -6,20 +6,24 @@ The pipeline is one function the terminal command wraps, so a future dashboard f
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] New Job and Pick storage as described in the spec; a Pick is unique per (Job, Person); a known Person is reused, not duplicated; status history records Pick changes
-- [ ] Job description text is sanitized before it reaches Claude; extracted fields are shown for confirmation and can be edited; a missing company prompts the user
-- [ ] Supplied picks accept any number of links; links are normalized; the confirm step allows removing and adding links before any profile is read
-- [ ] A Style file example (Instructions, Example emails, Example connection notes) is committed; the real Style file at the repo root is gitignored; `init` copies the example only if the real file doesn't exist; `job` refuses to run with a clear message when the Style file is missing
-- [ ] The Style file and background block go into the cached system prompt; profile text stays fenced as untrusted data, as today
-- [ ] One Claude call per Pick returns subject, body, and note; validation covers subject and body (only `resume_url` allowed as a link, no emails or phone numbers in text, no injection patterns, banned phrases, or HTML, body ≤ 200 words, subject ≤ 80 characters) and the note (≤ configurable `note_max_chars`, default 200); up to 3 attempts
-- [ ] An Email finder interface ("given the open profile, return an email or nothing, and why") exists, wired through the command context, with a "none" implementation used by default in this ticket
-- [ ] Pick statuses reach `drafted` (only once an email exists, so not in this ticket) or `no_email`; a Pick that fails validation 3 times is left with its validation errors recorded (full `needs_detail` handling comes in 06)
-- [ ] Terminal output: each Pick's name, profile link, and Connection note, then a summary (Picks, drafts, failures, page views used)
-- [ ] Found emails, subjects, bodies, and notes are never logged and are covered by the redaction filter
-- [ ] Tests through the `job` command using the existing fakes (fake browser session, fake Claude, scripted terminal input, no-op sleep) cover: happy path, corrected company, missing company, removed Pick, injection text in a profile, a CAPTCHA stopping the run, page-view cap reached mid-run
+- [x] New Job and Pick storage as described in the spec; a Pick is unique per (Job, Person); a known Person is reused, not duplicated; status history records Pick changes
+- [x] Job description text is sanitized before it reaches Claude; extracted fields are shown for confirmation and can be edited; a missing company prompts the user
+- [x] Supplied picks accept any number of links; links are normalized; the confirm step allows removing and adding links before any profile is read
+- [x] A Style file example (Instructions, Example emails, Example connection notes) is committed; the real Style file at the repo root is gitignored; `init` copies the example only if the real file doesn't exist; `job` refuses to run with a clear message when the Style file is missing
+- [x] The Style file and background block go into the cached system prompt; profile text stays fenced as untrusted data, as today
+- [x] One Claude call per Pick returns subject, body, and note; validation covers subject and body (only `resume_url` allowed as a link, no emails or phone numbers in text, no injection patterns, banned phrases, or HTML, body ≤ 200 words, subject ≤ 80 characters) and the note (≤ configurable `note_max_chars`, default 200); up to 3 attempts
+- [x] An Email finder interface ("given the open profile, return an email or nothing, and why") exists, wired through the command context, with a "none" implementation used by default in this ticket
+- [x] Pick statuses reach `drafted` (only once an email exists, so not in this ticket) or `no_email`; a Pick that fails validation 3 times is left with its validation errors recorded (full `needs_detail` handling comes in 06)
+- [x] Terminal output: each Pick's name, profile link, and Connection note, then a summary (Picks, drafts, failures, page views used)
+- [x] Found emails, subjects, bodies, and notes are never logged and are covered by the redaction filter
+- [x] Tests through the `job` command using the existing fakes (fake browser session, fake Claude, scripted terminal input, no-op sleep) cover: happy path, corrected company, missing company, removed Pick, injection text in a profile, a CAPTCHA stopping the run, page-view cap reached mid-run
 
 ## Comments
 
 **2026-11-21:** See 12 (Claude Code backend). The user has no API key, so build this ticket's Claude calls (Job extraction, drafting) on the injectable client object that `Drafter` already uses. Don't call `anthropic.Anthropic` directly. That way 12's `llm_backend: claude_code` works for `job` without changes here.
+
+**Implemented (2026-11-22).** Pipeline: `jobflow.process_job(ctx, job_id, report, client, style, finder)` does the per-Pick work (read profile → Email finder → draft → validate → save, committed per Pick); `commands/job.py` is the terminal wrapper (description from paste-until-`END` or `--file`, field confirmation, link collection and confirmation, notes and summary printed even after a stop). Claude calls live in `jobdraft.py` (`extract_job`, `JobDrafter`) and go through the new `llm.structured_call` on the injectable client (`Ctx.claude_client`, default `llm.make_client()`); `Drafter._call` now uses the same helper, so 12 only needs to change `llm.make_client`. Storage: `jobs` and `picks` tables, `status_history.pick_id` (migrated with `ALTER TABLE` for existing DBs), `DB.ensure_person` / `add_pick` / `set_pick_status` / `pick_history`; `purge` skips people with Picks. Email finder interface in `emailfinder.py` with `NoFinder`, wired through `Ctx.email_finder`; a found email must pass an email-format check or it's ignored. Validation: `validate.validate_email_draft`; any failure is retried with the reasons (quoted offending text stripped so an injected URL isn't fed back), 3 attempts, then the Pick stays `picked` with errors stored. Style file: `style.md` next to `config.yaml` (`paths.style_path()`), example `linkreach/examples/style.example.md`, copied by `init`, gitignored. `job` runs without `companies.csv`/`jobs.csv`.
+
+Decisions worth a look: `note_max_chars` default is now 200 (example config too); the legacy-flow test fixture pins 280 until ticket 11. New Persons created by `job` get person-level status `collected`, so the old `draft` command would also pick them up until 11 removes it. Log redaction now also scrubs any email address pattern and the keys `email`, `subject`, `email_body`, `connection_note`, `description`, `user_detail`. Tests: `tests/test_job.py` (26) and new cases in `tests/test_validate.py`. Full suite passes (189); bandit clean.

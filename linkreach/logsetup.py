@@ -22,8 +22,12 @@ SENSITIVE_KEYS = {
     "note", "note_draft", "note_sent", "followup", "followup_draft", "message", "body",
     "text", "cookie", "cookies", "set-cookie", "authorization", "api_key", "x-api-key",
     "prompt", "content", "token",
+    # Job flow: found emails and everything written for a Pick.
+    "email", "found_email", "subject", "email_subject", "email_body", "connection_note",
+    "description", "user_detail",
 }
 _PATTERNS = [
+    (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "[REDACTED_EMAIL]"),
     (re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"), "[REDACTED_API_KEY]"),
     (re.compile(r"(?i)(li_at|JSESSIONID|li_rm|bcookie|bscookie|lidc)=[^;\s]+"), r"\1=[REDACTED_COOKIE]"),
     (re.compile(r"(?i)(cookie|set-cookie|authorization|x-api-key)\s*[:=]\s*\S+"), r"\1: [REDACTED]"),

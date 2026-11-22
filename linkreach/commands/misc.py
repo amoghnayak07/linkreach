@@ -97,6 +97,7 @@ def init(directory: Path) -> int:
         ("config.example.yaml", "config.yaml"),
         ("companies.example.csv", "companies.csv"),
         ("jobs.example.csv", "jobs.csv"),
+        ("style.example.md", paths.STYLE_FILE),
     ):
         dest = directory / target
         if dest.exists():

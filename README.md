@@ -35,7 +35,7 @@ pip install --no-deps -e .
 Then, in the folder where you want to keep your input files:
 
 ```bash
-linkreach init        # copies config.yaml, companies.csv, jobs.csv here (never overwrites)
+linkreach init        # copies config.yaml, style.md, companies.csv, jobs.csv here (never overwrites)
 linkreach set-key     # stores ANTHROPIC_API_KEY in the OS keychain (hidden input)
 ```
 
@@ -69,6 +69,27 @@ linkreach never asks for, reads, or stores your LinkedIn password. `login` opens
 1. **Weeks 1 to 3:** run `send` without `--auto`. The tool fills the connect dialog and waits for you to press Enter before it clicks Send.
 2. **Week 1:** keep `companies.csv` to two or three companies until the selectors work end to end.
 3. **Week 4 onward:** switch to `send --auto` if acceptance holds at 25% or higher across 30+ requests older than 7 days. The brake enforces this.
+
+## Outreach for one job: `linkreach job`
+
+You've found a role you want. `linkreach job` takes its job description and the LinkedIn profiles you've already researched, and writes an email draft and a connection note for each person (a Pick). It never sends anything.
+
+```bash
+linkreach job                  # paste the job description, then type END on its own line
+linkreach job --file jd.txt    # or read it from a file
+```
+
+1. Claude reads the company, role, team, and location from the description. Press Enter to keep each value or type a correction. If the description doesn't name a company (for example a staffing-agency post), you're asked for it; linkreach never guesses.
+2. Paste profile links, one or more per line, then an empty line. Links are normalized (`linkedin.com/in/Jane-Doe?trk=…` becomes `https://www.linkedin.com/in/jane-doe/`), and anything that isn't a LinkedIn profile is skipped. Any number of links is fine.
+3. Confirm the list: Enter starts, `-2` removes link 2, pasting a link adds it, `q` quits without saving. No profile is opened before you confirm.
+4. linkreach reads each profile (same page-view caps, delays, and stop-on-CAPTCHA rules as every other command), then Claude writes the email subject, body, and connection note in one call. Code checks them (below) and retries up to 3 times with the reasons.
+5. The terminal prints every Pick's name, profile link, and connection note, then a summary: Picks, drafts, failures, emails found, page views used.
+
+The Job, each Person, and each Pick (with its subject, body, and note) are saved in the database. A Person already in the database is reused, so their history across Jobs stays together. Email lookup and Gmail drafts aren't built yet, so every drafted Pick currently ends `no_email`; a Pick whose draft fails validation 3 times keeps its status `picked` with the reasons stored.
+
+**Your Style file.** `style.md`, next to `config.yaml`, is how every email and note should sound. It has three sections: Instructions (they govern the subject, body, and note), Example emails, and Example connection notes. `linkreach init` creates it from `linkreach/examples/style.example.md` if it doesn't exist and never overwrites it. It's gitignored. `job` refuses to run without it. It goes into the cached system prompt next to your `background` block.
+
+**Draft checks.** Subject at most 80 characters and one line; body at most 200 words and must contain your `resume_url`; connection note at most `note_max_chars` (default 200, the free-account limit; set 300 if you have Premium). Only `resume_url` may appear as a link, and only in the body. No email addresses, phone numbers, instruction-like text, banned phrases, or HTML anywhere. Found emails, subjects, bodies, and notes are never logged, and the log redaction filter scrubs them (and any email address) as a second line of defense.
 
 ## Daily use
 

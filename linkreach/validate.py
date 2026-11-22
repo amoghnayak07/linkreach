@@ -111,6 +111,43 @@ def check(cfg, note: str | None, followup: str | None) -> Result:
     )
 
 
+SUBJECT_MAX_CHARS = 80
+BODY_MAX_WORDS = 200
+
+
+def validate_email_draft(
+    subject: str | None,
+    body: str | None,
+    note: str | None,
+    *,
+    resume_url: str,
+    banned_phrases: list[str],
+    note_max_chars: int = 200,
+) -> Result:
+    """Checks for a Job flow draft: email subject, email body, and Connection note.
+    Only resume_url may appear as a link, and only in the body."""
+    res = Result()
+    subject, body, note = subject or "", body or "", note or ""
+    for label, text in (("subject", subject), ("body", body), ("note", note)):
+        if not text.strip():
+            res.add(f"{label}: empty")
+    if "\n" in subject.strip():
+        res.add("subject: must be one line")
+    _content_checks("subject", subject, resume_url, banned_phrases, res, allow_resume=False)
+    _content_checks("body", body, resume_url, banned_phrases, res, allow_resume=True)
+    _content_checks("note", note, resume_url, banned_phrases, res, allow_resume=False)
+    if body.strip() and resume_url not in body:
+        res.add("body: must include the resume link")
+    if len(subject) > SUBJECT_MAX_CHARS:
+        res.add(f"length: subject is {len(subject)} characters (max {SUBJECT_MAX_CHARS})")
+    wc = word_count(body)
+    if wc > BODY_MAX_WORDS:
+        res.add(f"length: body is {wc} words (max {BODY_MAX_WORDS})")
+    if len(note) > note_max_chars:
+        res.add(f"length: note is {len(note)} characters (max {note_max_chars})")
+    return res
+
+
 def suspicious_context(text: str) -> list[str]:
     """Reasons a scraped context field should be kept out of the prompt entirely."""
     reasons = []

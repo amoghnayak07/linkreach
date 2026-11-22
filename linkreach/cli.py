@@ -14,6 +14,10 @@ from linkreach.config import ConfigError, load_inputs
 from linkreach.db import DB, STATUSES
 
 
+# Commands that don't use companies.csv / jobs.csv, so they run without them.
+NO_CSV_COMMANDS = {"job"}
+
+
 def peek_connect_mode(argv: list[str] | None) -> str:
     """Read `connect_mode` from config.yaml before full validation, so help text can
     hide `send` and `sync`. Anything unreadable counts as the default, manual."""
@@ -39,7 +43,9 @@ def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True, metavar="command")
 
-    sub.add_parser("init", help="copy example config.yaml, companies.csv, jobs.csv here")
+    sub.add_parser("init", help="copy example config.yaml, style.md, companies.csv, jobs.csv here")
+    j = sub.add_parser("job", help="paste a job description and profile links; get an email draft and connection note per Pick")
+    j.add_argument("--file", type=Path, help="read the job description from this file instead of pasting it")
     sub.add_parser("set-key", help="store ANTHROPIC_API_KEY in the OS keychain")
     sub.add_parser("login", help="open the dedicated Chrome profile so you can sign in to LinkedIn by hand")
     c = sub.add_parser("collect", help="find people at each company")
@@ -86,7 +92,7 @@ def main(argv: list[str] | None = None, ctx_overrides: dict | None = None) -> in
         return misc.set_key()
 
     try:
-        inputs = load_inputs()
+        inputs = load_inputs(require_csvs=args.command not in NO_CSV_COMMANDS)
     except ConfigError as exc:
         console.print(f"[bold red]linkreach refuses to start: {len(exc.problems)} problem(s) in your input files[/]")
         for prob in exc.problems:
@@ -106,6 +112,10 @@ def main(argv: list[str] | None = None, ctx_overrides: dict | None = None) -> in
 
 def _dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
     cmd = args.command
+    if cmd == "job":
+        from linkreach.commands import job
+
+        return job.run(ctx, file=args.file)
     if cmd == "collect":
         from linkreach.commands import collect
 
