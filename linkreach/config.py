@@ -118,6 +118,7 @@ class Templates(Strict):
 
 
 ConnectMode = Literal["manual", "automated"]
+LlmBackend = Literal["api", "claude_code"]
 
 
 class Config(Strict):
@@ -135,7 +136,12 @@ class Config(Strict):
     resume_url: str
     banned_phrases: list[str] = Field(default_factory=lambda: list(DEFAULT_BANNED_PHRASES))
     model: str = "claude-sonnet-5-5"
-    use_refusal_fallbacks: bool = True
+    # How Claude is reached: "api" (Anthropic API key) or "claude_code" (the local Claude
+    # Code CLI, signed in with your own account; no API key).
+    llm_backend: LlmBackend = "api"
+    claude_code_path: str = Field("claude", min_length=1)
+    claude_code_timeout_seconds: int = Field(120, ge=10, le=900)
+    use_refusal_fallbacks: bool = True  # API-only; ignored with claude_code
     # Connection note limit: 200 for a free LinkedIn account, 300 with Premium.
     note_max_chars: int = Field(200, ge=50, le=300)
     followup_max_words: int = Field(150, ge=50, le=400)

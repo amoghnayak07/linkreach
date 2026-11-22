@@ -41,10 +41,10 @@ class Ctx:
     session_factory: SessionFactory = playwright_factory
     sleep: Callable[[float], None] = time.sleep
     input_fn: Callable[[str], str] = input
-    api_check: Callable[[str], tuple[bool, str]] | None = None  # doctor's API-key check (tests inject one)
+    api_check: Callable[[Config], tuple[bool, str]] | None = None  # doctor's Claude-access check (tests inject one)
     drafter: object | None = None  # drafting.Drafter (tests inject one with a fake client)
     open_chrome: Callable[[Path, str], int] = open_plain_chrome  # login's plain-Chrome window
-    claude_client: object | None = None  # client for `job`'s Claude calls; None = llm.make_client()
+    claude_client: object | None = None  # client for `job`'s Claude calls; None = llm.make_client(cfg)
     email_finder: object | None = None  # emailfinder.EmailFinder; None = NoFinder
 
     @property

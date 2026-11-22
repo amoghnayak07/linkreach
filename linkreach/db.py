@@ -67,6 +67,24 @@ PICK_AUTO_TRANSITIONS: dict[str, set[str]] = {
     "picked": {"drafted", "no_email", "needs_detail", "dead"},
     "needs_detail": {"drafted", "no_email", "dead"},
 }
+# Statuses only linkreach sets (after drafting); `mark` refuses them.
+PICK_AUTO_ONLY = {"picked", "drafted", "no_email", "needs_detail"}
+# Moves the user makes with `mark`. `emailed` and `connected` come in either order;
+# `dead` is reachable from every status but itself.
+PICK_MANUAL_TRANSITIONS: dict[str, set[str]] = {
+    "picked": {"dead"},
+    "needs_detail": {"dead"},
+    "drafted": {"emailed", "connected", "dead"},
+    "no_email": {"emailed", "connected", "dead"},
+    "emailed": {"connected", "replied", "dead"},
+    "connected": {"emailed", "replied", "dead"},
+    "replied": {"meeting", "dead"},
+    "meeting": {"referral", "dead"},
+    "referral": {"dead"},
+    "dead": set(),
+}
+# A Person who reached one of these on any Pick has been contacted (duplicate guard).
+PICK_CONTACTED = ("emailed", "replied", "meeting", "referral")
 PICK_ORIGINS = ("supplied", "found")
 
 SCHEMA = """
@@ -423,13 +441,18 @@ class DB:
             (pick_id,),
         ).fetchone()
 
-    def picks(self, job_id: int, statuses: Iterable[str] | None = None) -> list[sqlite3.Row]:
+    def picks(self, job_id: int | None, statuses: Iterable[str] | None = None) -> list[sqlite3.Row]:
+        """Picks of one Job (or of every Job when `job_id` is None), optionally by status."""
         sql = (
             "SELECT picks.*, people.name, people.title, people.company, people.profile_url, people.is_alumni, "
-            "people.context_1, people.context_2 FROM picks JOIN people ON people.id = picks.person_id "
-            "WHERE picks.job_id = ?"
+            "people.context_1, people.context_2, jobs.company AS job_company, jobs.role_title AS job_role "
+            "FROM picks JOIN people ON people.id = picks.person_id JOIN jobs ON jobs.id = picks.job_id "
+            "WHERE 1 = 1"
         )
-        args: list[Any] = [job_id]
+        args: list[Any] = []
+        if job_id is not None:
+            sql += " AND picks.job_id = ?"
+            args.append(job_id)
         if statuses is not None:
             statuses = list(statuses)
             sql += f" AND picks.status IN ({', '.join('?' for _ in statuses)})"
@@ -454,15 +477,26 @@ class DB:
         )
         self.conn.commit()
 
-    def set_pick_status(self, pick_id: int, new_status: str, source: str = "cli", **fields: Any) -> None:
-        """Move a Pick along the automatic part of its lifecycle, writing status_history."""
+    def set_pick_status(
+        self, pick_id: int, new_status: str, source: str = "cli", manual: bool = False, **fields: Any
+    ) -> None:
+        """Move a Pick along its lifecycle, writing status_history. `manual` is the user's
+        part (`mark`): emailed / connected onward, and dead. Without it, only linkreach's
+        own moves up to drafted / no_email / needs_detail are allowed."""
         if new_status not in PICK_STATUSES:
             raise TransitionError(f"unknown pick status {new_status!r}")
         row = self.conn.execute("SELECT status, person_id FROM picks WHERE id = ?", (pick_id,)).fetchone()
         if row is None:
             raise TransitionError(f"no pick with id {pick_id}")
         old = row["status"]
-        if new_status != old and new_status not in PICK_AUTO_TRANSITIONS.get(old, set()):
+        if manual:
+            if new_status in PICK_AUTO_ONLY:
+                raise TransitionError(f"{new_status} is set by linkreach itself, not by hand")
+            allowed = PICK_MANUAL_TRANSITIONS.get(old, set())
+            if new_status != old and new_status not in allowed:
+                nxt = ", ".join(s for s in PICK_STATUSES if s in allowed) or "nothing (dead is final)"
+                raise TransitionError(f"cannot move a pick from {old} to {new_status}; from {old} it can go to: {nxt}")
+        elif new_status != old and new_status not in PICK_AUTO_TRANSITIONS.get(old, set()):
             raise TransitionError(f"cannot move a pick from {old} to {new_status}")
         if fields:
             self.update_pick(pick_id, **fields)
@@ -476,6 +510,29 @@ class DB:
 
     def pick_history(self, pick_id: int) -> list[sqlite3.Row]:
         return list(self.conn.execute("SELECT * FROM status_history WHERE pick_id = ? ORDER BY id", (pick_id,)))
+
+    def person_id_for(self, profile_url: str) -> int | None:
+        row = self.conn.execute(
+            "SELECT id FROM people WHERE profile_url = ?", (normalize_profile_url(profile_url),)
+        ).fetchone()
+        return int(row["id"]) if row else None
+
+    def prior_contacts(self, person_id: int, exclude_job_id: int | None = None) -> list[sqlite3.Row]:
+        """The Person's Picks on other Jobs that reached emailed or later (even if since
+        marked dead), with when: `emailed_at` (None if never emailed, e.g. reached
+        replied via connected) and `contacted_at` (first contacted status)."""
+        return list(
+            self.conn.execute(
+                "SELECT picks.id AS pick_id, picks.job_id, picks.status, jobs.company, jobs.role_title, "
+                "MIN(CASE WHEN h.new_status = 'emailed' THEN h.changed_at END) AS emailed_at, "
+                "MIN(h.changed_at) AS contacted_at "
+                "FROM picks JOIN jobs ON jobs.id = picks.job_id "
+                "JOIN status_history h ON h.pick_id = picks.id "
+                f"WHERE picks.person_id = ? AND picks.job_id != ? AND h.new_status IN ({', '.join('?' for _ in PICK_CONTACTED)}) "
+                "GROUP BY picks.id ORDER BY contacted_at",  # nosec B608 - placeholders only
+                (person_id, -1 if exclude_job_id is None else exclude_job_id, *PICK_CONTACTED),
+            )
+        )
 
     # ---------- openers ----------
     def add_opener(self, person_id: int, text: str) -> None:

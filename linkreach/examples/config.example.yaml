@@ -59,6 +59,20 @@ resume_url: https://example.com/naveen-murali-resume.pdf   # CHANGE ME
 banned_phrases: [synergy, leverage, passionate about disrupting, circle back, i hope this finds you well]
 
 model: claude-sonnet-5-5
+
+# How linkreach reaches Claude:
+#   api          the Anthropic API with your own API key (`linkreach set-key` or .env)
+#   claude_code  the Claude Code CLI installed on this computer (`claude -p`), signed in
+#                with your own Claude account. No API key needed: use this on a Claude
+#                Pro/Max/Team/Enterprise plan without API access. Calls count against your
+#                plan's usage limits; on a Team/Enterprise seat, check that your organization
+#                allows scripted and personal use first. Run `claude` once and sign in.
+llm_backend: api              # api | claude_code
+claude_code_path: claude      # claude_code only: name on PATH, or a full path such as
+                              # C:/Users/you/.local/bin/claude.exe
+claude_code_timeout_seconds: 120   # claude_code only: give up on one call after this long
+
+# API-only (ignored with claude_code, as is prompt caching):
 use_refusal_fallbacks: true   # server-side fallback if the model declines a request
 
 note_max_chars: 200           # connection note limit: 200 on a free LinkedIn account, 300 with Premium

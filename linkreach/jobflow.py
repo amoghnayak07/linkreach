@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from linkreach import logsetup, paths, sanitize, validate
+from linkreach import clock, logsetup, paths, sanitize, validate
 from linkreach.commands.common import Ctx, FailStreak, linkedin_session
 from linkreach.db import DB, normalize_profile_url
 from linkreach.emailfinder import EmailFinder, NoFinder
@@ -58,6 +58,27 @@ def parse_profile_link(raw: str) -> str | None:
 
 def split_links(text: str) -> list[str]:
     return [t for t in re.split(r"[\s,]+", text or "") if t]
+
+
+def _local_date(iso_ts: str) -> str:
+    return clock.parse(iso_ts).astimezone().date().isoformat()
+
+
+def contact_flags(db: DB, profile_url: str, exclude_job_id: int | None = None) -> list[str]:
+    """Duplicate guard: one line per other Job on which this Person was already contacted
+    (emailed or later), e.g. "already emailed on 2026-11-20 for Job #3 PM at Microsoft".
+    Empty for a new Person. It only informs; the user decides whether to keep the Pick."""
+    person_id = db.person_id_for(profile_url)
+    if person_id is None:
+        return []
+    flags = []
+    for r in db.prior_contacts(person_id, exclude_job_id):
+        job = f"Job #{r['job_id']} {r['role_title'] or 'role'} at {r['company']}"
+        if r["emailed_at"]:
+            flags.append(f"already emailed on {_local_date(r['emailed_at'])} for {job}")
+        else:
+            flags.append(f"already contacted on {_local_date(r['contacted_at'])} for {job} (now {r['status']})")
+    return flags
 
 
 def create_job(db: DB, fields: JobFields, description: str) -> int:

@@ -1,4 +1,7 @@
-"""Small commands: mark, list, export, purge, init, login, set-key."""
+"""Small commands: mark, list, export, purge, init, login, set-key.
+
+`mark` and `list` work on Picks (`mark_pick`, `list_picks`). The person-level `mark` and
+`list_people` stay for the dormant connection-request path (ADR-0001)."""
 
 from __future__ import annotations
 
@@ -31,6 +34,50 @@ def mark(ctx: Ctx, person_id: int, status: str) -> int:
         return 1
     row = ctx.db.get(person_id)
     console.print(f"#{person_id} {escape(row['name'])} is now [bold]{status}[/]")
+    return 0
+
+
+def job_label(job_id: int, role: str | None, company: str | None) -> str:
+    return f"Job #{job_id} {role or 'role'} at {company or '?'}"
+
+
+def mark_pick(ctx: Ctx, pick_id: int, status: str) -> int:
+    """`linkreach mark`: record outreach the user did outside linkreach on one Pick."""
+    row = ctx.db.get_pick(pick_id)
+    if row is None:
+        console.print(f"[red]No Pick #{pick_id}. `linkreach list` shows Pick ids.[/]")
+        return 1
+    if row["status"] == status:
+        console.print(f"Pick #{pick_id} {escape(row['name'])} is already [bold]{status}[/]; nothing changed.")
+        return 0
+    try:
+        ctx.db.set_pick_status(pick_id, status, source="cli", manual=True)
+    except TransitionError as exc:
+        console.print(f"[red]Pick #{pick_id}: {escape(str(exc))}[/]", soft_wrap=True)
+        return 1
+    console.print(f"Pick #{pick_id} {escape(row['name'])} is now [bold]{status}[/]")
+    return 0
+
+
+def list_picks(ctx: Ctx, job_id: int | None = None, status: str | None = None) -> int:
+    """`linkreach list`: Picks, optionally for one Job and one status."""
+    if job_id is not None and ctx.db.get_job(job_id) is None:
+        console.print(f"[red]No Job #{job_id}.[/]")
+        return 1
+    rows = ctx.db.picks(job_id, [status] if status else None)
+    t = Table(show_lines=False)
+    for col in ("pick", "job", "person", "status", "email"):
+        t.add_column(col)
+    for r in rows:
+        t.add_row(
+            str(r["id"]),
+            escape(job_label(r["job_id"], r["job_role"], r["job_company"])),
+            escape(r["name"]),
+            r["status"],
+            "found" if r["email"] else "",
+        )
+    console.print(t)
+    console.print(f"{len(rows)} picks")
     return 0
 
 

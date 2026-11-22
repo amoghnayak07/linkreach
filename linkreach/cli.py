@@ -11,11 +11,12 @@ from rich.markup import escape
 from linkreach import __version__, logsetup, paths
 from linkreach.commands.common import CONNECT_COMMANDS, EXIT_CONFIG, Ctx, console
 from linkreach.config import ConfigError, load_inputs
-from linkreach.db import DB, STATUSES
+from linkreach.db import DB, PICK_AUTO_ONLY, PICK_STATUSES
 
+MARK_PICK_CHOICES = [s for s in PICK_STATUSES if s not in PICK_AUTO_ONLY]
 
 # Commands that don't use companies.csv / jobs.csv, so they run without them.
-NO_CSV_COMMANDS = {"job"}
+NO_CSV_COMMANDS = {"job", "mark", "list"}
 
 
 def peek_connect_mode(argv: list[str] | None) -> str:
@@ -46,7 +47,7 @@ def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     sub.add_parser("init", help="copy example config.yaml, style.md, companies.csv, jobs.csv here")
     j = sub.add_parser("job", help="paste a job description and profile links; get an email draft and connection note per Pick")
     j.add_argument("--file", type=Path, help="read the job description from this file instead of pasting it")
-    sub.add_parser("set-key", help="store ANTHROPIC_API_KEY in the OS keychain")
+    sub.add_parser("set-key", help="store ANTHROPIC_API_KEY in the OS keychain (llm_backend: api only)")
     sub.add_parser("login", help="open the dedicated Chrome profile so you can sign in to LinkedIn by hand")
     c = sub.add_parser("collect", help="find people at each company")
     c.add_argument("--dry-run", action="store_true", help="print planned searches; open nothing")
@@ -56,16 +57,18 @@ def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     s.add_argument("--auto", action="store_true", help="click Send without asking (runs doctor first)")
     s.add_argument("--override-brake", action="store_true", help="allow --auto even when the acceptance brake is tripped")
     sub.add_parser("sync", help="mark accepted connections")
-    m = sub.add_parser("mark", help="set a person's status by hand")
-    m.add_argument("id", type=int)
-    m.add_argument("status", choices=["accepted", "followed_up", "replied", "meeting", "referral", "dead"])
-    ls = sub.add_parser("list", help="print people in the terminal")
-    ls.add_argument("--status", choices=STATUSES)
+    m = sub.add_parser("mark", help="record what you did for a Pick (emailed, connected, replied, meeting, referral, dead)")
+    m.add_argument("id", type=int, help="Pick id (see `linkreach list`)")
+    # Every Pick status is accepted here so the hand-set guard can explain the refusal.
+    m.add_argument("status", choices=PICK_STATUSES, metavar="status", help=", ".join(MARK_PICK_CHOICES))
+    ls = sub.add_parser("list", help="print Picks in the terminal, by Job and status")
+    ls.add_argument("--job", type=int, help="only this Job id")
+    ls.add_argument("--status", choices=PICK_STATUSES)
     d = sub.add_parser("dashboard", help="start the local dashboard on 127.0.0.1:8765")
     d.add_argument("--no-open", action="store_true", help="don't open a browser tab")
     e = sub.add_parser("export", help="write all people to linkreach_export.csv")
     e.add_argument("--out", type=Path)
-    sub.add_parser("doctor", help="check selectors, login, API key, caps, and DB")
+    sub.add_parser("doctor", help="check selectors, login, Claude access (API key or Claude Code), caps, and DB")
     pg = sub.add_parser("purge", help="delete dead/skipped people older than N days")
     pg.add_argument("--older-than", default="180d", help="age like 180d (default 180d)")
     if connect_mode != "automated":
@@ -128,7 +131,7 @@ def _dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
             run_start(ctx.db, "draft")
             try:
                 drafter = ctx.drafter or drafting.Drafter(ctx.cfg)
-                _ = drafter.client  # type: ignore[attr-defined]  # fail fast if no key
+                _ = drafter.client  # type: ignore[attr-defined]  # fail fast if no key / no `claude`
             except RuntimeError as exc:
                 console.print(f"[red]{exc}[/]")
                 return EXIT_CONFIG
@@ -170,11 +173,11 @@ def _dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
     if cmd == "mark":
         from linkreach.commands import misc
 
-        return misc.mark(ctx, args.id, args.status)
+        return misc.mark_pick(ctx, args.id, args.status)
     if cmd == "list":
         from linkreach.commands import misc
 
-        return misc.list_people(ctx, args.status)
+        return misc.list_picks(ctx, args.job, args.status)
     if cmd == "export":
         from linkreach.commands import misc
 

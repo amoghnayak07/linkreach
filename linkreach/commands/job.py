@@ -13,6 +13,7 @@ from typing import Any
 from rich.markup import escape
 
 from linkreach import jobflow, llm, logsetup, sanitize
+from linkreach.claude_code import ClaudeCodeError
 from linkreach.commands.common import EXIT_CONFIG, EXIT_OK, Ctx, console, handle_run_errors
 from linkreach.jobdraft import JobFields, clean_description, extract_job
 
@@ -111,6 +112,8 @@ def confirm_links(ctx: Ctx, urls: list[str]) -> list[str]:
         console.print(f"[bold]Picks ({len(urls)}):[/]")
         for i, u in enumerate(urls, start=1):
             console.print(f"  {i}. {escape(u)}", soft_wrap=True)
+            for flag in jobflow.contact_flags(ctx.db, u):
+                console.print(f"     [yellow]{escape(flag)}[/] (kept unless you remove it)", soft_wrap=True)
         ans = _ask(ctx, "Enter to start, -N to remove link N, paste a link to add, q to quit: ").strip()
         if not ans:
             return urls
@@ -127,7 +130,7 @@ def confirm_links(ctx: Ctx, urls: list[str]) -> list[str]:
 
 
 def _client(ctx: Ctx) -> Any:
-    return ctx.claude_client if ctx.claude_client is not None else llm.make_client()
+    return ctx.claude_client if ctx.claude_client is not None else llm.make_client(ctx.cfg)
 
 
 def run(ctx: Ctx, file: Path | None = None) -> int:
@@ -154,7 +157,9 @@ def run(ctx: Ctx, file: Path | None = None) -> int:
         fields = extract_job(client, ctx.cfg, description)
     except Exception as exc:  # the user can still type every field
         logsetup.event(log, "job extraction failed", error=type(exc).__name__)
-        console.print(f"[yellow]Couldn't read the job description with Claude ({type(exc).__name__}); please type the details.[/]")
+        # A Claude Code error message never holds prompt or output text, so it's safe to show.
+        why = str(exc) if isinstance(exc, ClaudeCodeError) else type(exc).__name__
+        console.print(f"[yellow]Couldn't read the job description with Claude ({escape(why)}); please type the details.[/]")
         fields = JobFields()
     confirmed = confirm_fields(ctx, fields)
     if confirmed is None:

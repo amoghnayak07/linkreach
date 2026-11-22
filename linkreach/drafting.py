@@ -24,7 +24,7 @@ from linkreach.db import DB
 
 log = logsetup.get("draft")
 
-MAX_PARALLEL = 5
+MAX_PARALLEL = llm.MAX_PARALLEL_API  # with claude_code: llm.MAX_PARALLEL_CLAUDE_CODE
 MAX_TRIES = 3
 FALLBACK_BETA = llm.FALLBACK_BETA
 
@@ -226,7 +226,7 @@ class Drafter:
     @property
     def client(self) -> Any:
         if self._client is None:
-            self._client = make_client()
+            self._client = make_client(self.cfg)
         return self._client
 
     def _call(self, system: list[dict[str, Any]], user: str) -> dict[str, Any]:
@@ -315,7 +315,8 @@ def run_draft(
     drafter: Drafter | None = None,
     on_result: Callable[[Any, DraftOutcome], None] | None = None,
 ) -> dict[str, int]:
-    """Draft everyone with status `collected`, up to 5 API calls at a time."""
+    """Draft everyone with status `collected`, up to 5 API calls at a time (2 with
+    the claude_code backend, where each call is a process)."""
     cfg = inputs.config
     drafter = drafter or Drafter(cfg)
     rows = db.people(["collected"])
@@ -328,9 +329,10 @@ def run_draft(
     counts = {"drafted": 0, "needs_detail": 0, "error": 0}
     pending: dict[Future, Any] = {}
     queue = list(rows)
-    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+    parallel = llm.max_parallel(cfg)
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
         while queue or pending:
-            while queue and len(pending) < MAX_PARALLEL:
+            while queue and len(pending) < parallel:
                 row = queue.pop(0)
                 pending[pool.submit(_safe_draft, drafter, row, db.recent_openers(5))] = row
             done = next(iter(_as_completed(pending)))

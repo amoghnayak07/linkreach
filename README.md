@@ -7,7 +7,7 @@ A Python CLI that finds recruiters and product leaders at established companies,
 ## Required before first use
 
 1. **Full-disk encryption on.** FileVault (macOS) or BitLocker / Device Encryption (Windows). The DB holds names, notes, and your LinkedIn session cookies live in the Chrome profile.
-2. **A monthly spend limit in the Anthropic Console** (Settings → Limits). `draft` makes up to 5 parallel calls and retries on errors, so set a cap you're comfortable losing.
+2. **With an API key (`llm_backend: api`): a monthly spend limit in the Anthropic Console** (Settings → Limits). `draft` makes up to 5 parallel calls and retries on errors, so set a cap you're comfortable losing. With `llm_backend: claude_code` there's no API bill; calls use your Claude plan (see [Reaching Claude](#reaching-claude-api-key-or-claude-code)).
 3. Python 3.11+ and Google Chrome installed.
 
 ## Setup
@@ -30,18 +30,37 @@ pip install --require-hashes -r requirements.txt
 pip install --no-deps -e .
 ```
 
-`requirements.txt` was locked on Windows. On macOS, run `make lock` (needs `pip install pip-tools`) once to regenerate both lock files for your platform.
+`requirements.txt` was locked on Windows with Python 3.11. On macOS, run `make lock` (needs `pip install pip-tools`) once to regenerate both lock files for your platform. Always lock with Python 3.11, the oldest version linkreach supports: a lock built on 3.12 or newer leaves out packages that only older Pythons need (such as `backports-tarfile`), so `pip install --require-hashes` and `make check` then fail on 3.11. A lock built on 3.11 works on newer versions too.
 
 Then, in the folder where you want to keep your input files:
 
 ```bash
 linkreach init        # copies config.yaml, style.md, companies.csv, jobs.csv here (never overwrites)
-linkreach set-key     # stores ANTHROPIC_API_KEY in the OS keychain (hidden input)
+linkreach set-key     # llm_backend: api only. Stores ANTHROPIC_API_KEY in the OS keychain (hidden input)
 ```
 
 Edit `config.yaml`: set `resume_url`, check your background block, and set `doctor_profile_url` to a public profile with an About section. Edit `companies.csv` (companies with 1,000+ employees only). `jobs.csv` is optional.
 
-Key lookup order: OS keychain → `ANTHROPIC_API_KEY` environment variable → `.env` in the input folder → `~/.linkreach/.env`. See `.env.example`.
+### Reaching Claude: API key or Claude Code
+
+Every Claude call linkreach makes (Job extraction and drafting) goes through one client, picked by `llm_backend` in `config.yaml`:
+
+| `llm_backend` | How it reaches Claude | Needs |
+| --- | --- | --- |
+| `api` (default) | The Anthropic API through the Python SDK | An API key (`linkreach set-key` or `.env`) |
+| `claude_code` | The Claude Code CLI on this computer, run as `claude -p` and signed in with your own Claude account | Claude Code installed, and signed in once (run `claude`, then `/login`) |
+
+API key lookup order (`api` only): OS keychain → `ANTHROPIC_API_KEY` environment variable → `.env` in the input folder → `~/.linkreach/.env`. See `.env.example`. With `claude_code`, linkreach never looks for or asks for a key.
+
+**`claude_code` details.**
+- Each call runs `claude -p` as a plain text-in, JSON-out model call, never as an agent: all tools off (`--tools ""`), no MCP servers (`--strict-mcp-config`), no user/project/local settings (`--setting-sources ""`), no skills or slash commands, no saved session, and a fresh empty temp folder as the working directory, so no `CLAUDE.md` is loaded. The system prompt goes in a temp file and your profile data on stdin, so neither shows up in process listings.
+- `claude_code_path` (default `claude`, found on PATH) can point at the executable directly, for example `C:/Users/you/.local/bin/claude.exe` on a Windows install outside PATH. `claude_code_timeout_seconds` (default 120) caps one call.
+- `draft` runs at most 2 calls at a time (each one starts a process), instead of 5.
+- `use_refusal_fallbacks` and prompt caching are API-only and are skipped.
+- Failures show a plain message: not signed in, usage limit reached, timeout, or a non-zero exit.
+- `linkreach doctor` checks that `claude` is found and makes one tiny no-tools call to confirm you're signed in.
+
+**On a Claude Team or Enterprise seat** (for example, if you have no API key): calls count against your seat's usage limits like any other Claude Code use, and a `draft` run with many people uses a fair amount. Check that your organization allows scripted and personal use of Claude Code before you turn this on.
 
 ### The Chrome profile
 
@@ -59,7 +78,7 @@ Sign in once:
 
 ```bash
 linkreach login       # opens plain Chrome on the dedicated profile; sign in, then close the window
-linkreach doctor      # checks selectors, login, API key, caps, DB integrity
+linkreach doctor      # checks selectors, login, Claude access (API key or Claude Code), caps, DB integrity
 ```
 
 linkreach never asks for, reads, or stores your LinkedIn password. `login` opens ordinary Chrome (no automation, no domain filter) on the dedicated profile, because LinkedIn's sign-in loads security-check scripts from other domains and hangs under the filter. Sign in, wait for your feed, then close that window; `login` then checks the session under the normal filtered browser. Every other command runs with the domain allowlist on.
@@ -87,6 +106,18 @@ linkreach job --file jd.txt    # or read it from a file
 
 The Job, each Person, and each Pick (with its subject, body, and note) are saved in the database. A Person already in the database is reused, so their history across Jobs stays together. Email lookup and Gmail drafts aren't built yet, so every drafted Pick currently ends `no_email`; a Pick whose draft fails validation 3 times keeps its status `picked` with the reasons stored.
 
+**Tracking progress.** linkreach never sends, so you record what you did yourself, per Pick:
+
+```bash
+linkreach list                       # every Pick: id, Job, person, status, whether an email was found
+linkreach list --job 3 --status no_email
+linkreach mark 42 emailed            # you sent the email draft
+linkreach mark 42 connected          # you sent the connection note (either order)
+linkreach mark 42 replied            # then meeting, then referral; dead works from any status
+```
+
+A Pick moves `picked → drafted | no_email | needs_detail` (linkreach sets these; `mark` refuses them), then `drafted | no_email → emailed | connected` in either order, then `replied → meeting → referral`. `mark` rejects any other move and says where the Pick can go. Every change is recorded in the status history. If someone you're adding to a new Job was already emailed (or got further) for another Job, the confirmation step flags it, for example "already emailed on 2026-11-20 for Job #3 Product Manager II at Microsoft". The Pick is kept unless you remove it.
+
 **Your Style file.** `style.md`, next to `config.yaml`, is how every email and note should sound. It has three sections: Instructions (they govern the subject, body, and note), Example emails, and Example connection notes. `linkreach init` creates it from `linkreach/examples/style.example.md` if it doesn't exist and never overwrites it. It's gitignored. `job` refuses to run without it. It goes into the cached system prompt next to your `background` block.
 
 **Draft checks.** Subject at most 80 characters and one line; body at most 200 words and must contain your `resume_url`; connection note at most `note_max_chars` (default 200, the free-account limit; set 300 if you have Premium). Only `resume_url` may appear as a link, and only in the body. No email addresses, phone numbers, instruction-like text, banned phrases, or HTML anywhere. Found emails, subjects, bodies, and notes are never logged, and the log redaction filter scrubs them (and any email address) as a second line of defense.
@@ -103,8 +134,8 @@ linkreach review              # a approve · e edit in $EDITOR · d add detail +
 linkreach send                # connect_mode: automated only. Shows each note, Enter sends, s skips, q quits
 linkreach sync                # connect_mode: automated only. Every few days: marks 1st-degree connections `accepted`
 linkreach dashboard           # http://127.0.0.1:8765, opens in your browser
-linkreach mark 42 replied     # accepted | followed_up | replied | meeting | referral | dead
-linkreach list --status sent
+linkreach mark 42 emailed     # Pick 42: emailed | connected | replied | meeting | referral | dead
+linkreach list --job 3 --status no_email
 linkreach export              # linkreach_export.csv
 linkreach purge --older-than 180d
 ```
@@ -171,7 +202,7 @@ Keep the default "Run only when user is logged on" so Chrome can open a window.
 
 **Dashboard.** Bound to `127.0.0.1:8765`. Requests with a Host header other than `127.0.0.1:8765` or `localhost:8765` get 403 (DNS rebinding). A random 32-byte token is created at each start and passed in the URL fragment, which browsers never send to the server. Every `/api` call must carry it in `X-Linkreach-Token`. No CORS headers. State changes are POST only. All data renders through `textContent`. CSP is `default-src 'self'` plus a per-launch nonce for the page's single inline `<script>` and `<style>` block (the spec asks for both a one-file page and `default-src 'self'`; the nonce lets both hold without `unsafe-inline`).
 
-**Secrets.** API key from the keychain. Logs are JSON, rotate at 10 MB × 5, and pass through a redaction filter that scrubs API keys, cookies, the dashboard token, and any note/follow-up/message field. Code never logs message bodies in the first place.
+**Secrets.** API key from the keychain (or no key at all with `llm_backend: claude_code`, which uses Claude Code's own sign-in). Logs are JSON, rotate at 10 MB × 5, and pass through a redaction filter that scrubs API keys, cookies, the dashboard token, and any note/follow-up/message field. Code never logs message bodies in the first place.
 
 **Data at rest.** Everything private lives in `~/.linkreach/` (override with `LINKREACH_HOME`): folder 700, files 600. On Windows, `chmod` only toggles read-only. The folder sits inside your user profile, which Windows already restricts to your account, and BitLocker covers the rest.
 
@@ -205,7 +236,7 @@ python scripts/demo_dashboard.py   # dashboard with fake data at http://127.0.0.
 python scripts/demo_cli.py         # interactive terminal walkthrough with a fake LinkedIn and fake Claude
 ```
 
-The tests use a fake browser (`tests/fakes.py`) and a fake Claude client, so they never touch LinkedIn or the API. They cover caps, the brake, dedupe, status transitions, CAPTCHA stops, crash-resume, injection, dashboard hardening, and log redaction.
+The tests use a fake browser (`tests/fakes.py`) and a fake Claude client (plus a fake process runner for the Claude Code backend), so they never touch LinkedIn, the API, or the real `claude` CLI. They cover caps, the brake, dedupe, status transitions, CAPTCHA stops, crash-resume, injection, dashboard hardening, and log redaction.
 
 ## Where this goes beyond the spec
 
@@ -215,4 +246,4 @@ The tests use a fake browser (`tests/fakes.py`) and a fake Claude client, so the
 - **Bucket shares:** `per_company_limit` is split across buckets in config order (6 over 4 buckets is 2, 2, 1, 1), so one role can't take every slot at a company. A bucket that finds fewer people than its share passes the spare slots to the next bucket in the same run. The alumni pass draws from the same shares, so alumni go first within each bucket. A search whose bucket (or company) is already full is skipped without a page view, and `collect --dry-run` shows each company's shares.
 - **Approval** happens in `review` or the dashboard's Review tab. Both run the same server-side validation, and the generic status dropdown still can't set `approved`.
 - **Templates** for both messages live in `config.yaml`. The model fills in the pieces, and code enforces the 280-character and 150-word limits (3 tries, then flagged for manual edit).
-- **Model:** `claude-sonnet-5-5`, with server-side refusal fallbacks on (`use_refusal_fallbacks`). Prompt caching covers the system prompt and background block. Very short configs may fall under the minimum cacheable size, in which case caching quietly doesn't apply.
+- **Model:** `claude-sonnet-5-5`, with server-side refusal fallbacks on (`use_refusal_fallbacks`, API backend only). Prompt caching (API backend only) covers the system prompt and background block. Very short configs may fall under the minimum cacheable size, in which case caching quietly doesn't apply.
