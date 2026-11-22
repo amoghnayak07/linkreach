@@ -109,54 +109,7 @@ textarea { width: 100%; min-height: 90px; resize: vertical; }
 .dot-live { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
 .dot-live.on { background: var(--good); box-shadow: 0 0 0 3px var(--good-weak); }
 .live b { color: var(--text); }
-nav .n { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--accent-weak); color: var(--accent); font-size: 11px; font-weight: 700; text-align: center; }
-/* review queue */
-.rv-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
-.chip { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 999px; padding: 4px 12px; font: inherit; cursor: pointer; }
-.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-.keys { margin-left: auto; font-size: 12px; color: var(--muted); }
-kbd { font: 11px ui-monospace, Consolas, monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--panel-2); color: var(--text); }
-.rv-list { display: grid; gap: 12px; max-width: 980px; }
-.rv { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; outline: none; }
-.rv.focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
-.rv.needs { border-left: 4px solid var(--warn); }
-.rv.ready { border-left: 4px solid var(--good); }
-.rv-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-.rv-head h3 { margin: 0; font-size: 15px; }
-.rv-head .sub { color: var(--muted); font-size: 13px; }
-.rv-ctx { color: var(--muted); font-size: 12px; margin: 6px 0 10px; }
-.rv-ctx div { overflow-wrap: anywhere; }
-.rv-err { background: var(--bad-weak); color: var(--bad); border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 8px 0; white-space: pre-wrap; }
-.rv-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 8px; }
-.rv-label .over { color: var(--bad); font-weight: 700; }
-.rv-note { font-size: 14.5px; line-height: 1.5; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-details.rv-fu summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-top: 8px; }
-.rv-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
-button.btn.good { background: var(--good); border-color: var(--good); color: #fff; }
-button.btn.bad { color: var(--bad); }
-.rv textarea.note { min-height: 80px; }
-.rv textarea.fu { min-height: 220px; font: 13px/1.5 ui-monospace, Consolas, monospace; }
-.rv .detail-row { display: flex; gap: 8px; margin-top: 10px; }
-.rv .detail-row input { flex: 1; }
-.ok-text { color: var(--good); font-size: 12px; }
-h2.spaced { margin-top: 22px; }
-code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
-/* outbox */
-.ob-row { display: grid; grid-template-columns: 180px 1fr auto; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); align-items: start; }
-.ob-row:last-child { border-bottom: none; }
-.ob-row .who b { display: block; }
-.ob-row .who span { color: var(--muted); font-size: 12px; }
-.ob-row .msg-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
-.st { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; white-space: nowrap; }
-.st-sent { background: var(--accent-weak); color: var(--accent); }
-.st-accepted, .st-followed_up, .st-replied, .st-meeting, .st-referral { background: var(--good-weak); color: var(--good); }
-.st-failed, .st-dead { background: var(--bad-weak); color: var(--bad); }
-.st-approved { background: var(--warn-weak); color: var(--warn); }
 .toast button { margin-left: 10px; background: none; border: 1px solid currentColor; color: inherit; border-radius: 4px; font: inherit; padding: 0 8px; cursor: pointer; }
-@media (max-width: 640px) {
-  .ob-row { grid-template-columns: 1fr; }
-  .keys { display: none; }
-}
 @media (max-width: 640px) {
   header, main { padding-left: 16px; padding-right: 16px; }
   nav { padding: 0 8px; }
@@ -184,32 +137,13 @@ code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2);
   <div class="live" id="live"><span class="dot-live" id="live-dot"></span><span id="live-text">Idle</span></div>
 </header>
 <nav role="tablist" id="tabs">
-  <button role="tab" data-tab="review" aria-selected="true">Review<span class="n" id="n-review">0</span></button>
-  <button role="tab" data-tab="outbox" aria-selected="false">Outbox<span class="n" id="n-outbox">0</span></button>
-  <button role="tab" data-tab="people" aria-selected="false">People</button>
-  <button role="tab" data-tab="followups" aria-selected="false">Follow-ups</button>
+  <button role="tab" data-tab="people" aria-selected="true">People</button>
   <button role="tab" data-tab="companies" aria-selected="false">Companies</button>
   <button role="tab" data-tab="insights" aria-selected="false">Insights</button>
   <button role="tab" data-tab="activity" aria-selected="false">Activity log</button>
 </nav>
 <main>
-  <section id="tab-review">
-    <div class="rv-bar">
-      <button class="chip" type="button" data-filter="drafted" aria-pressed="true">Ready to approve <span id="c-ready">0</span></button>
-      <button class="chip" type="button" data-filter="needs_detail" aria-pressed="false">Needs detail <span id="c-needs">0</span></button>
-      <button class="chip" type="button" data-filter="all" aria-pressed="false">All</button>
-      <span class="keys"><kbd>j</kbd>/<kbd>k</kbd> move · <kbd>a</kbd> approve · <kbd>x</kbd> decline · <kbd>e</kbd> edit · <kbd>r</kbd> add detail</span>
-    </div>
-    <div class="rv-list" id="rv-list"></div>
-  </section>
-  <section id="tab-outbox" hidden>
-    <h2>Queued to send <span class="count" id="ob-left"></span></h2>
-    <p class="count">Approved messages, in the order <code>linkreach send</code> will go through them. Nothing is sent until you run it.</p>
-    <div class="tablewrap" id="ob-queued"></div>
-    <h2 class="spaced">Sent</h2>
-    <div class="tablewrap" id="ob-sent"></div>
-  </section>
-  <section id="tab-people" hidden>
+  <section id="tab-people">
     <div class="filters">
       <input type="search" id="f-q" placeholder="Search name or company">
       <select id="f-company"><option value="">All companies</option></select>
@@ -226,14 +160,10 @@ code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2);
       </table>
     </div>
   </section>
-  <section id="tab-followups" hidden>
-    <h2>Follow-ups due</h2>
-    <div class="cards" id="fu-list"></div>
-  </section>
   <section id="tab-companies" hidden>
     <div class="tablewrap">
       <table>
-        <thead><tr><th>Company</th><th>Priority</th><th>Collected</th><th>Sent</th><th>Accepted</th><th>Acceptance</th><th>Last contact</th></tr></thead>
+        <thead><tr><th>Company</th><th>People</th><th>Sent</th><th>Accepted</th><th>Acceptance</th><th>Last contact</th></tr></thead>
         <tbody id="c-body"></tbody>
       </table>
     </div>
@@ -265,8 +195,7 @@ code { font: 12px ui-monospace, Consolas, monospace; background: var(--panel-2);
 const SVGNS = "http://www.w3.org/2000/svg";
 let TOKEN = "";
 const state = {
-  people: [], statuses: [], summary: null, tab: "review",
-  review: { items: [], limits: { note_chars: 280, followup_words: 150 }, filter: "drafted", focus: 0, editing: null, detailing: null },
+  people: [], statuses: [], summary: null, tab: "people",
 };
 
 function readToken() {
@@ -397,9 +326,6 @@ async function loadSummary() {
     lt.appendChild(document.createTextNode(" · last: " + e.command + " " + e.event +
       (e.name ? " · " + e.name : "") + (e.detail ? " · " + e.detail : "") + " · " + ago(e.timestamp)));
   }
-  const c = s.counts || {};
-  document.getElementById("n-review").textContent = String((c.drafted || 0) + (c.needs_detail || 0));
-  document.getElementById("n-outbox").textContent = String(c.approved || 0);
   const banner = document.getElementById("banner");
   if (s.banner) {
     banner.textContent = "Last " + s.banner.command + " run stopped (" + s.banner.reason + ") at " + when(s.banner.at) +
@@ -439,7 +365,7 @@ function statusSelect(p) {
   const sel = el("select", { class: "status-sel", "aria-label": "Status for " + p.name });
   for (const s of state.statuses) {
     const o = el("option", { value: s, text: s });
-    if (s === "approved" && p.status !== "approved") o.disabled = true; // approve in `linkreach review`
+    if (s === "approved" && p.status !== "approved") o.disabled = true; // never set by hand
     sel.appendChild(o);
   }
   sel.value = p.status;
@@ -502,8 +428,6 @@ async function openPanel(id) {
   panel.appendChild(dl);
   panel.appendChild(el("h2", { text: p.note_sent ? "Note sent" : "Note draft (not sent)" }));
   panel.appendChild(el("pre", { class: "msg", text: p.note_sent || p.note_draft || "\u2013" }));
-  panel.appendChild(el("h2", { text: "Follow-up draft" }));
-  panel.appendChild(el("pre", { class: "msg", text: p.followup_draft || "\u2013" }));
   panel.appendChild(el("h2", { text: "Status history" }));
   const ul = el("ul", { class: "hist" });
   for (const h of data.history) ul.appendChild(el("li", { text: when(h.changed_at) + ": " + (h.old_status || "new") + " → " + h.new_status + " (" + h.source + ")" }));
@@ -534,50 +458,14 @@ function exportCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-// ---------- follow-ups ----------
-async function loadFollowups() {
-  const list = document.getElementById("fu-list"); clear(list);
-  const items = await api("/api/followups");
-  if (!items.length) { list.appendChild(el("div", { class: "empty", text: "No follow-ups due today." })); return; }
-  for (const f of items) {
-    const pre = el("pre", { class: "msg", text: f.followup_draft || "(no follow-up drafted)" });
-    const copy = el("button", { class: "btn primary", type: "button", text: "Copy" });
-    copy.addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(pre.textContent); toast("Copied"); } catch (e) { toast("Copy failed; select the text by hand"); }
-    });
-    const regen = el("button", { class: "btn", type: "button", text: "Regenerate" });
-    regen.addEventListener("click", async () => {
-      regen.disabled = true; regen.textContent = "Regenerating\u2026";
-      try { const r = await api("/api/people/" + f.id + "/followup/regenerate", { method: "POST", body: {} }); pre.textContent = r.followup_draft; toast("Regenerated"); }
-      catch (e) { toast(e.message); }
-      regen.disabled = false; regen.textContent = "Regenerate";
-    });
-    const done = el("button", { class: "btn", type: "button", text: "Done" });
-    done.addEventListener("click", async () => {
-      try { await api("/api/people/" + f.id + "/followup/done", { method: "POST", body: {} }); toast("Marked followed_up"); refreshAll(); } catch (e) { toast(e.message); }
-    });
-    const snooze = el("button", { class: "btn", type: "button", text: "Snooze 5 days" });
-    snooze.addEventListener("click", async () => {
-      try { const r = await api("/api/people/" + f.id + "/followup/snooze", { method: "POST", body: {} }); toast("Snoozed to " + r.follow_up_date); refreshAll(); } catch (e) { toast(e.message); }
-    });
-    list.appendChild(el("div", { class: "card" }, [
-      el("h2", { text: f.name }),
-      el("div", { class: "meta", text: (f.title || "") + " · " + f.company + " · due " + f.follow_up_date }),
-      el("div", { class: "meta", text: "Email subject: " + f.email_subject }),
-      pre,
-      el("div", { class: "actions" }, [copy, regen, link(f.profile_url, "Open profile"), done, snooze]),
-    ]));
-  }
-}
-
 // ---------- companies ----------
 async function loadCompanies() {
   const body = document.getElementById("c-body"); clear(body);
   const rows = await api("/api/companies");
-  if (!rows.length) { body.appendChild(el("tr", null, [el("td", { colspan: 7, class: "empty", text: "No companies yet." })])); return; }
+  if (!rows.length) { body.appendChild(el("tr", null, [el("td", { colspan: 6, class: "empty", text: "No companies yet." })])); return; }
   for (const c of rows) body.appendChild(el("tr", { class: c.flag ? "flag" : null }, [
-    el("td", { text: c.company }), el("td", { class: "num", text: c.priority || "\u2013" }),
-    el("td", { class: "num", text: c.collected }), el("td", { class: "num", text: c.sent }),
+    el("td", { text: c.company }),
+    el("td", { class: "num", text: c.people }), el("td", { class: "num", text: c.sent }),
     el("td", { class: "num", text: c.accepted }), el("td", { class: "num", text: pct(c.rate) }),
     el("td", { class: "date", text: d10(c.last_contact) || "\u2013" }),
   ]));
@@ -642,221 +530,6 @@ async function loadActivity() {
   ]));
 }
 
-// ---------- review queue ----------
-async function loadReview() {
-  const r = await api("/api/review");
-  state.review.items = r.items; state.review.limits = r.limits;
-  renderReview();
-}
-function reviewVisible() {
-  const f = state.review.filter;
-  return state.review.items.filter(i => f === "all" || i.status === f);
-}
-function counter(label, n, max, unit) {
-  return el("div", { class: "rv-label" }, [
-    el("span", { text: label }),
-    el("span", { class: n > max ? "over" : null, text: n + " / " + max + " " + unit }),
-  ]);
-}
-function words(t) { return (t.match(/\S+/g) || []).length; }
-function renderReview() {
-  const rv = state.review;
-  const ready = rv.items.filter(i => i.status === "drafted").length;
-  document.getElementById("c-ready").textContent = String(ready);
-  document.getElementById("c-needs").textContent = String(rv.items.length - ready);
-  for (const ch of document.querySelectorAll(".rv-bar .chip")) ch.setAttribute("aria-pressed", ch.dataset.filter === rv.filter ? "true" : "false");
-  const list = document.getElementById("rv-list"); clear(list);
-  const items = reviewVisible();
-  if (rv.focus >= items.length) rv.focus = Math.max(0, items.length - 1);
-  if (!items.length) {
-    list.appendChild(el("div", { class: "card empty", text: rv.filter === "drafted"
-      ? "Nothing waiting for approval. Run `linkreach draft` to write more."
-      : "Nothing here." }));
-    return;
-  }
-  items.forEach((it, idx) => list.appendChild(reviewCard(it, idx)));
-}
-function reviewCard(it, idx) {
-  const rv = state.review, lim = rv.limits;
-  const ready = it.status === "drafted";
-  const card = el("article", { class: "rv " + (ready ? "ready" : "needs") + (idx === rv.focus ? " focus" : ""), tabindex: "-1", "data-id": it.id });
-  card.addEventListener("click", () => { if (rv.focus !== idx) { rv.focus = idx; markFocus(); } });
-
-  const head = el("div", { class: "rv-head" }, [
-    el("h3", null, [link(it.profile_url, it.name)]),
-    el("span", { class: "sub", text: (it.title || "") + " · " + it.company }),
-    it.bucket ? el("span", { class: "badge bucket", text: it.bucket }) : null,
-    it.is_alumni ? el("span", { class: "badge alumni", text: "alumni" }) : null,
-    el("span", { class: "st " + (ready ? "st-accepted" : "st-approved"), text: ready ? "ready" : "needs detail" }),
-  ]);
-  card.appendChild(head);
-  const ctx = el("div", { class: "rv-ctx" });
-  if (it.job_title) ctx.appendChild(el("div", { text: "Role: " + it.job_title }));
-  if (it.context_1) ctx.appendChild(el("div", { text: "From profile: " + it.context_1 }));
-  if (it.context_2) ctx.appendChild(el("div", { text: "From profile: " + it.context_2 }));
-  if (it.user_detail) ctx.appendChild(el("div", { text: "Your detail: " + it.user_detail }));
-  card.appendChild(ctx);
-  if (it.validation_errors) card.appendChild(el("div", { class: "rv-err", text: it.validation_errors }));
-
-  if (rv.editing === it.id) { card.appendChild(editor(it)); return card; }
-
-  const note = it.note_draft || "";
-  card.appendChild(counter("Connection note", note.length, lim.note_chars, "chars"));
-  card.appendChild(el("div", { class: "rv-note", text: note || "(no draft yet)" }));
-  if (it.followup_draft) {
-    const det = el("details", { class: "rv-fu" });
-    det.appendChild(el("summary", { text: "Follow-up message (sent by you after they accept) · " + it.followup_words + " / " + lim.followup_words + " words" }));
-    det.appendChild(el("div", { class: "rv-note", text: it.followup_draft }));
-    card.appendChild(det);
-  }
-
-  const actions = el("div", { class: "rv-actions" });
-  const approve = el("button", { class: "btn good", type: "button", text: "Approve", title: ready ? "a" : "Fix or redraft first" });
-  approve.disabled = !ready;
-  approve.addEventListener("click", e => { e.stopPropagation(); doApprove(it); });
-  const decline = el("button", { class: "btn bad", type: "button", text: "Decline", title: "x" });
-  decline.addEventListener("click", e => { e.stopPropagation(); doDecline(it); });
-  const edit = el("button", { class: "btn", type: "button", text: "Edit", title: "e" });
-  edit.addEventListener("click", e => { e.stopPropagation(); rv.editing = it.id; rv.detailing = null; renderReview(); });
-  const detail = el("button", { class: "btn", type: "button", text: "Add detail & redraft", title: "r" });
-  detail.addEventListener("click", e => { e.stopPropagation(); rv.detailing = rv.detailing === it.id ? null : it.id; renderReview(); });
-  actions.append(approve, decline, edit, detail);
-  card.appendChild(actions);
-
-  if (rv.detailing === it.id) {
-    const inp = el("input", { type: "text", maxlength: 300, placeholder: "One line about their work, e.g. spoke at Build about Copilot pricing", "aria-label": "Detail" });
-    const go = el("button", { class: "btn primary", type: "button", text: "Redraft" });
-    const run = async () => {
-      if (!inp.value.trim()) return;
-      go.disabled = true; go.textContent = "Drafting…";
-      try {
-        const r = await api("/api/people/" + it.id + "/redraft", { method: "POST", body: { detail: inp.value.trim() } });
-        rv.detailing = null;
-        toast(r.status === "drafted" ? "Redrafted: ready to approve" : "Redrafted, still needs work");
-        await loadReview(); loadSummary();
-      } catch (e) { toast("Redraft failed: " + e.message); go.disabled = false; go.textContent = "Redraft"; }
-    };
-    go.addEventListener("click", e => { e.stopPropagation(); run(); });
-    inp.addEventListener("keydown", e => { if (e.key === "Enter") run(); if (e.key === "Escape") { rv.detailing = null; renderReview(); } });
-    card.appendChild(el("div", { class: "detail-row" }, [inp, go]));
-    setTimeout(() => inp.focus(), 0);
-  }
-  return card;
-}
-function editor(it) {
-  const rv = state.review, lim = rv.limits;
-  const wrap = el("div");
-  const note = el("textarea", { class: "note", "aria-label": "Connection note" }); note.value = it.note_draft || "";
-  const fu = el("textarea", { class: "fu", "aria-label": "Follow-up message" }); fu.value = it.followup_draft || "";
-  const nc = counter("Connection note", note.value.length, lim.note_chars, "chars");
-  const fc = counter("Follow-up message", words(fu.value), lim.followup_words, "words");
-  const status = el("div", { class: "ok-text" });
-  let timer = null;
-  const check = () => {
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      try {
-        const r = await api("/api/validate", { method: "POST", body: { note: note.value, followup: fu.value } });
-        status.className = r.ok ? "ok-text" : "rv-err";
-        status.textContent = r.ok ? "Passes every check" : r.errors.join("\n");
-      } catch (e) {}
-    }, 300);
-  };
-  // keep counters live
-  note.addEventListener("input", () => { const n = counter("Connection note", note.value.length, lim.note_chars, "chars"); wrap.replaceChild(n, wrap.children[0]); check(); });
-  fu.addEventListener("input", () => { const n = counter("Follow-up message", words(fu.value), lim.followup_words, "words"); wrap.replaceChild(n, wrap.children[2]); check(); });
-  const save = el("button", { class: "btn primary", type: "button", text: "Save" });
-  const cancel = el("button", { class: "btn", type: "button", text: "Cancel" });
-  save.addEventListener("click", async e => {
-    e.stopPropagation();
-    try {
-      const r = await api("/api/people/" + it.id + "/draft", { method: "POST", body: { note: note.value, followup: fu.value } });
-      rv.editing = null;
-      toast(r.ok ? "Saved: ready to approve" : "Saved, but it still fails a check");
-      if (r.ok && rv.filter === "needs_detail") rv.filter = "drafted";
-      await loadReview(); loadSummary();
-    } catch (err) { toast("Save failed: " + err.message); }
-  });
-  cancel.addEventListener("click", e => { e.stopPropagation(); rv.editing = null; renderReview(); });
-  wrap.append(nc, note, fc, fu, status, el("div", { class: "rv-actions" }, [save, cancel]));
-  setTimeout(() => { note.focus(); check(); }, 0);
-  return wrap;
-}
-async function doApprove(it) {
-  try {
-    await api("/api/people/" + it.id + "/approve", { method: "POST", body: {} });
-    toast("Approved " + it.name + ": queued in Outbox", async () => {
-      try { await api("/api/people/" + it.id + "/unapprove", { method: "POST", body: {} }); await loadReview(); loadSummary(); } catch (e) { toast(e.message); }
-    });
-  } catch (e) { toast("Not approved: " + e.message); }
-  await loadReview(); loadSummary();
-}
-async function doDecline(it) {
-  const prev = it.status;
-  try {
-    await api("/api/people/" + it.id + "/decline", { method: "POST", body: {} });
-    toast("Declined " + it.name + " (marked skipped)", async () => {
-      try { await api("/api/people/" + it.id + "/status", { method: "POST", body: { status: prev } }); await loadReview(); loadSummary(); } catch (e) { toast(e.message); }
-    });
-  } catch (e) { toast("Not declined: " + e.message); }
-  await loadReview(); loadSummary();
-}
-function markFocus() {
-  const cards = document.querySelectorAll("#rv-list .rv");
-  cards.forEach((c, i) => c.classList.toggle("focus", i === state.review.focus));
-  const f = cards[state.review.focus];
-  if (f) f.scrollIntoView({ block: "nearest", behavior: "smooth" });
-}
-document.addEventListener("keydown", e => {
-  if (state.tab !== "review") return;
-  const t = e.target;
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
-  if (e.ctrlKey || e.metaKey || e.altKey) return;
-  const items = reviewVisible(), rv = state.review, it = items[rv.focus];
-  if (e.key === "j" || e.key === "ArrowDown") { rv.focus = Math.min(items.length - 1, rv.focus + 1); markFocus(); e.preventDefault(); }
-  else if (e.key === "k" || e.key === "ArrowUp") { rv.focus = Math.max(0, rv.focus - 1); markFocus(); e.preventDefault(); }
-  else if (!it) return;
-  else if (e.key === "a" && it.status === "drafted") doApprove(it);
-  else if (e.key === "x") doDecline(it);
-  else if (e.key === "e") { rv.editing = it.id; rv.detailing = null; renderReview(); e.preventDefault(); }
-  else if (e.key === "r") { rv.detailing = it.id; rv.editing = null; renderReview(); e.preventDefault(); }
-});
-for (const ch of document.querySelectorAll(".rv-bar .chip")) ch.addEventListener("click", () => {
-  state.review.filter = ch.dataset.filter; state.review.focus = 0; state.review.editing = null; state.review.detailing = null; renderReview();
-});
-
-// ---------- outbox ----------
-function obRow(p, right) {
-  return el("div", { class: "ob-row" }, [
-    el("div", { class: "who" }, [el("b", null, [link(p.profile_url, p.name)]), el("span", { text: (p.title || "") + " · " + p.company })]),
-    el("div", { class: "msg-text", text: p.note_sent || p.note_draft || "" }),
-    right,
-  ]);
-}
-async function loadOutbox() {
-  const r = await api("/api/outbox");
-  document.getElementById("ob-left").textContent = "· " + r.queued.length + " queued, " + r.requests_left_today + " requests left today";
-  const q = document.getElementById("ob-queued"); clear(q);
-  if (!r.queued.length) q.appendChild(el("div", { class: "empty", text: "Nothing queued. Approve messages in the Review tab." }));
-  r.queued.forEach((p, i) => {
-    const back = el("button", { class: "btn", type: "button", text: "Back to review" });
-    back.addEventListener("click", async () => {
-      try { await api("/api/people/" + p.id + "/unapprove", { method: "POST", body: {} }); toast("Moved back to review"); loadOutbox(); loadSummary(); } catch (e) { toast(e.message); }
-    });
-    const right = el("div", { class: "rv-actions" }, [el("span", { class: "count", text: "#" + (i + 1) + (p.send_attempted_at ? " · interrupted, will be checked" : "") }), back]);
-    q.appendChild(obRow(p, right));
-  });
-  const s = document.getElementById("ob-sent"); clear(s);
-  if (!r.sent.length) s.appendChild(el("div", { class: "empty", text: "Nothing sent yet." }));
-  for (const p of r.sent) {
-    const right = el("div", null, [
-      el("span", { class: "st st-" + p.status, text: p.status }),
-      el("div", { class: "count", text: p.sent_at ? when(p.sent_at) : "" }),
-    ]);
-    s.appendChild(obRow(p, right));
-  }
-}
-
 // ---------- shell ----------
 function showTab(name) {
   state.tab = name;
@@ -866,10 +539,7 @@ function showTab(name) {
 }
 async function loadTab(name) {
   try {
-    if (name === "review") await loadReview();
-    else if (name === "outbox") await loadOutbox();
-    else if (name === "people") await loadPeople();
-    else if (name === "followups") await loadFollowups();
+    if (name === "people") await loadPeople();
     else if (name === "companies") await loadCompanies();
     else if (name === "insights") await loadInsights();
     else if (name === "activity") { if (!state.people.length) state.people = await api("/api/people"); await loadActivity(); }
@@ -903,10 +573,7 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") document.get
 setInterval(async () => {
   if (!TOKEN || document.hidden) return;
   try { await loadSummary(); } catch (e) { return; }
-  const busy = state.review.editing || state.review.detailing;
   if (state.tab === "activity" && document.getElementById("a-live").checked) loadTab("activity");
-  else if (state.tab === "outbox") loadTab("outbox");
-  else if (state.tab === "review" && !busy) loadTab("review");
 }, 4000);
 window.addEventListener("hashchange", () => {
   const had = TOKEN;

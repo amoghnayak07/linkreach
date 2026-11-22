@@ -7,9 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from linkreach.dashboard.server import INDEX, create_app
-from linkreach.drafting import Drafter
 
-from tests.fakes import FakeClaude
 from tests.helpers import add_approved, add_drafted, url
 
 TOKEN = "t" * 43
@@ -17,7 +15,7 @@ TOKEN = "t" * 43
 
 @pytest.fixture
 def client(env):
-    app = create_app(env.inputs, env.db.path, token=TOKEN, drafter_factory=lambda: Drafter(env.inputs.config, client=FakeClaude()))
+    app = create_app(env.inputs, env.db.path, token=TOKEN)
     return TestClient(app, base_url="http://127.0.0.1:8765")
 
 
@@ -103,43 +101,52 @@ def test_dashboard_cannot_approve(client, env):
     assert env.db.get(pid)["status"] == "drafted"
 
 
-def test_followups_done_and_snooze(client, env):
-    pid = add_approved(env, "f")
-    env.db.update_fields(pid, job_title="Product Manager II")
-    env.db.set_status(pid, "sent")
-    env.db.set_status(pid, "accepted")
-    env.db.update_fields(pid, follow_up_date="2000-01-01")
-    items = client.get("/api/followups", headers=H).json()
-    assert [i["id"] for i in items] == [pid]
-    assert items[0]["email_subject"] == "Product Manager II - Naveen Murali"
-    snoozed = client.post(f"/api/people/{pid}/followup/snooze", headers=H).json()["follow_up_date"]
-    assert snoozed > "2000-01-01"
-    assert client.get("/api/followups", headers=H).json() == []
-    env.db.update_fields(pid, follow_up_date="2000-01-01")
-    assert client.post(f"/api/people/{pid}/followup/done", headers=H).status_code == 200
-    row = env.db.get(pid)
-    assert row["status"] == "followed_up" and row["followed_up_at"]
+REMOVED_ENDPOINTS = [
+    ("get", "/api/review"),
+    ("get", "/api/outbox"),
+    ("get", "/api/followups"),
+    ("post", "/api/validate"),
+    ("post", "/api/people/{pid}/approve"),
+    ("post", "/api/people/{pid}/decline"),
+    ("post", "/api/people/{pid}/unapprove"),
+    ("post", "/api/people/{pid}/draft"),
+    ("post", "/api/people/{pid}/redraft"),
+    ("post", "/api/people/{pid}/followup/done"),
+    ("post", "/api/people/{pid}/followup/snooze"),
+    ("post", "/api/people/{pid}/followup/regenerate"),
+]
 
 
-def test_regenerate_followup(client, env):
-    pid = add_approved(env, "g")
-    r = client.post(f"/api/people/{pid}/followup/regenerate", headers=H)
-    assert r.status_code == 200 and r.json()["followup_draft"].startswith("Dear Jane")
+def test_review_outbox_and_followup_endpoints_are_gone(client, env):
+    pid = add_drafted(env, "gone")
+    for method, path in REMOVED_ENDPOINTS:
+        r = getattr(client, method)(path.format(pid=pid), headers=H, **({"json": {}} if method == "post" else {}))
+        assert r.status_code in (404, 405), (path, r.status_code)
+    assert env.db.get(pid)["status"] == "drafted"
+
+
+def test_page_has_no_review_outbox_or_followups_tab(client):
+    page = client.get("/").text
+    tabs = re.findall(r'data-tab="([a-z]+)"', page)
+    assert tabs == ["people", "companies", "insights", "activity"]
+    for gone in ("tab-review", "tab-outbox", "tab-followups", "/api/review", "/api/outbox", "/api/followups"):
+        assert gone not in page, gone
 
 
 def test_summary_companies_insights_activity(client, env):
     pid = add_approved(env, "h")
     env.db.set_status(pid, "sent")
-    env.db.log("collect", "run", None, "end:stopped:captcha")
+    env.db.log("job", "run", None, "end:stopped:captcha")
     s = client.get("/api/summary", headers=H).json()
     assert s["daily_cap"] == 20 and s["weekly_cap"] == 80
     assert s["brake"]["status"] == "off"
-    assert s["banner"]["reason"] == "captcha"
+    assert s["banner"] == {"at": s["banner"]["at"], "command": "job", "reason": "captcha"}
+    assert set(s["last_runs"]) == {"job", "send", "sync", "doctor"}
     comps = client.get("/api/companies", headers=H).json()
-    assert comps[0]["company"] == "Microsoft" and comps[0]["sent"] == 1
+    assert comps[0]["company"] == "Microsoft" and comps[0]["people"] == 1 and comps[0]["sent"] == 1
     ins = client.get("/api/insights", headers=H).json()
     assert ins["funnel"][0] == {"stage": "collected", "count": 1}
-    assert ins["by_bucket"][0]["bucket"] == "recruiter"
+    assert ins["by_bucket"][0] == {"bucket": "unknown", "sent": 1, "accepted": 0}
     acts = client.get("/api/activity", headers=H).json()
     assert acts[0]["detail"] == "end:stopped:captcha"
 

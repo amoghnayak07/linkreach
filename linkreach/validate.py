@@ -1,7 +1,7 @@
-"""Code-level checks on every draft before it is saved or sent.
+"""Code-level checks on every draft before it is saved.
 
-A draft that fails any check is stored as `needs_detail` and can never be
-approved until a new or edited version passes.
+A Job flow draft that fails these checks 3 times leaves its Pick at `needs_detail`,
+with no Gmail draft.
 """
 
 from __future__ import annotations
@@ -73,42 +73,23 @@ def _content_checks(label: str, text: str, resume_url: str, banned: list[str], r
             res.add(f"{label}: contains banned phrase {phrase!r}")
 
 
-def validate_draft(
+def validate_note(
     note: str | None,
-    followup: str | None,
     *,
     resume_url: str,
     banned_phrases: list[str],
-    note_max_chars: int = 280,
-    followup_max_words: int = 150,
+    note_max_chars: int = 200,
 ) -> Result:
+    """Checks for a connection note on its own: what the dormant `send` path (ADR-0001)
+    re-runs before typing a note. No links at all, not even resume_url."""
     res = Result()
     note = note or ""
-    followup = followup or ""
     if not note.strip():
         res.add("note: empty")
-    if not followup.strip():
-        res.add("followup: empty")
     _content_checks("note", note, resume_url, banned_phrases, res, allow_resume=False)
-    _content_checks("followup", followup, resume_url, banned_phrases, res, allow_resume=True)
     if len(note) > note_max_chars:
         res.add(f"length: note is {len(note)} characters (max {note_max_chars})")
-    wc = word_count(followup)
-    if wc > followup_max_words:
-        res.add(f"length: follow-up is {wc} words (max {followup_max_words})")
     return res
-
-
-def check(cfg, note: str | None, followup: str | None) -> Result:
-    """validate_draft with the limits and phrases from a Config."""
-    return validate_draft(
-        note,
-        followup,
-        resume_url=cfg.resume_url,
-        banned_phrases=cfg.banned_phrases,
-        note_max_chars=cfg.note_max_chars,
-        followup_max_words=cfg.followup_max_words,
-    )
 
 
 SUBJECT_MAX_CHARS = 80

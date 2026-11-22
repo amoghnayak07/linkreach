@@ -236,6 +236,36 @@ def test_gmail_login_stores_the_refresh_token_in_the_keychain(tmp_path, monkeypa
     assert AUTH.refresh_token not in logsetup.redact(f"token {AUTH.refresh_token}")
 
 
+def test_gmail_login_survives_an_idle_browser_connection(tmp_path, monkeypatch, env):
+    """Browsers open spare connections that never send a request. One of those must not
+    block the real redirect behind it."""
+    import socket
+
+    monkeypatch.setattr(gmail, "store_auth", lambda a: None)
+    consent, _ = browser_that_consents()
+    idle: list[socket.socket] = []
+
+    def open_browser(auth_url: str) -> None:
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(auth_url).query)
+        port = urllib.parse.urlsplit(q["redirect_uri"][0]).port
+        idle.append(socket.create_connection(("127.0.0.1", port)))  # connects, sends nothing
+        consent(auth_url)
+
+    done: dict = {}
+
+    def run():
+        done["auth"] = gmail.login(client_file(tmp_path), open_browser, timeout=30,
+                                   post_form=lambda u, f: {"refresh_token": "1//r-token-value", "scope": gmail.SCOPE})
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(20)
+    for s in idle:
+        s.close()
+    assert not t.is_alive(), "gmail-login hung on an idle connection"
+    assert done["auth"].refresh_token == "1//r-token-value"
+
+
 def test_gmail_login_refuses_broader_scopes(tmp_path, monkeypatch, env):
     stored = []
     monkeypatch.setattr(gmail, "store_auth", stored.append)

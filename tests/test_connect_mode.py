@@ -48,9 +48,20 @@ def test_manual_refuses_send_and_sync(env, capsys, command):
 
 def test_manual_hides_send_and_sync_from_help(env, capsys):
     out = help_text(capsys)
-    assert "collect" in out and "doctor" in out
+    assert "job" in out and "doctor" in out
     assert "send approved connection requests" not in out
     assert "mark accepted connections" not in out
+
+
+@pytest.mark.parametrize("command", ["collect", "draft", "review"])
+def test_old_bulk_flow_commands_are_gone(env, capsys, command):
+    with pytest.raises(SystemExit) as exc:
+        main([command])
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+    # Command lines are indented 4 spaces; wrapped help text is indented further.
+    listed = [line.split()[0] for line in help_text(capsys).splitlines() if line.startswith("    ") and line[4:5].strip()]
+    assert "job" in listed and command not in listed
 
 
 def test_automated_lists_send_and_sync_in_help(env, capsys):

@@ -151,9 +151,7 @@ def test_mark_through_the_cli(env, capsys):
     assert "set by linkreach itself" in capsys.readouterr().out
 
 
-def test_mark_and_list_run_without_csv_inputs(env):
-    (env.inputs_dir / "companies.csv").unlink()
-    (env.inputs_dir / "jobs.csv").unlink()
+def test_mark_and_list_through_the_cli(env):
     p = make_pick(env, status="drafted")
     assert main(["mark", str(p), "connected"]) == 0
     assert main(["list"]) == 0

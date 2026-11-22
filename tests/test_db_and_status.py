@@ -5,12 +5,9 @@ from datetime import timedelta
 import pytest
 
 from linkreach import clock
-from linkreach.commands import collect
 from linkreach.db import TransitionError, normalize_profile_url
 
-from tests.conftest import base_session
-from tests.fakes import search_page
-from tests.helpers import add_drafted, profile_for, url
+from tests.helpers import add_drafted, url
 
 
 def test_profile_url_normalized():
@@ -25,19 +22,6 @@ def test_duplicate_url_adds_no_row(env):
     again = env.db.add_person(name="Jane D", company="Microsoft", profile_url="https://linkedin.com/in/JANE-DOE?x=1")
     assert first is not None and again is None
     assert len(env.db.people()) == 1
-
-
-def test_collect_skips_known_profile_without_visiting(env):
-    env.db.add_person(name="Jane Doe", company="Microsoft", profile_url=url("jane-doe"))
-    s = base_session()
-    s.default = search_page("x", [])  # all other searches empty
-    s.add(search_page("microsoft", [("Jane Doe", "Technical Recruiter", url("jane-doe"))]))
-    page = profile_for(s, "jane-doe", headline="Recruiter")
-    code = collect.run(env.ctx(s))
-    assert code == 0
-    assert len(env.db.people()) == 1
-    assert url("jane-doe") not in s.visits  # dedupe happens before any profile view
-    assert page.send_clicks == 0
 
 
 def test_auto_transitions_enforced(env):

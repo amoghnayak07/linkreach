@@ -23,7 +23,7 @@ from linkreach.db import DB, STATUSES, TransitionError
 MARK_CHOICES = ["accepted", "followed_up", "replied", "meeting", "referral", "dead"]
 EXPORT_COLUMNS = [
     "id", "name", "title", "company", "profile_url", "bucket", "is_alumni", "status",
-    "job_title", "context_1", "context_2", "note_draft", "note_sent", "followup_draft",
+    "job_title", "context_1", "context_2", "note_draft", "note_sent",
     "collected_at", "sent_at", "accepted_at", "follow_up_date", "followed_up_at", "my_notes",
 ]
 
@@ -139,13 +139,11 @@ def purge(db: DB, older_than: str) -> int:
 
 
 def init(directory: Path) -> int:
-    """Copy example inputs into the current folder without overwriting anything."""
+    """Copy the example config and Style file into the current folder without overwriting anything."""
     src = Path(__file__).resolve().parent.parent / "examples"
     created = []
     for name, target in (
         ("config.example.yaml", "config.yaml"),
-        ("companies.example.csv", "companies.csv"),
-        ("jobs.example.csv", "jobs.csv"),
         ("style.example.md", paths.STYLE_FILE),
     ):
         dest = directory / target

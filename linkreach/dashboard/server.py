@@ -9,21 +9,24 @@ Hardening:
 - No CORS headers. State changes are POST only.
 - CSP: default-src 'self', plus a per-launch nonce for the page's one inline
   <script> and <style> block. The page renders all data with textContent.
+
+The Review, Outbox, and Follow-ups tabs (and their endpoints) are gone with the old bulk
+flow's drafting path; a later phase adds a Job form.
 """
 
 from __future__ import annotations
 
 import secrets
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from linkreach import clock, logsetup, validate
+from linkreach import clock, logsetup
 from linkreach.config import Inputs
 from linkreach.db import DB, STATUSES, TransitionError
 from linkreach.safety import brake_status, cap_status, overall_acceptance
@@ -45,8 +48,8 @@ _STAGE_REACHED = {
     "replied": {"replied", "meeting", "referral"},
     "meeting": {"meeting", "referral"},
 }
-LINKEDIN_COMMANDS = ["collect", "send", "sync", "doctor"]
-ALL_COMMANDS = ["collect", "draft", "review", "send", "sync", "doctor"]
+LINKEDIN_COMMANDS = ["job", "send", "sync", "doctor"]
+ALL_COMMANDS = ["job", "send", "sync", "doctor"]
 
 log = logsetup.get("dashboard")
 
@@ -59,16 +62,6 @@ class NotesBody(BaseModel):
     my_notes: str = Field(max_length=5000)
 
 
-class DraftBody(BaseModel):
-    note: str = Field(max_length=2000)
-    followup: str = Field(max_length=6000)
-
-
-class DetailBody(BaseModel):
-    detail: str = Field(min_length=1, max_length=300)
-
-
-REVIEWABLE = ("drafted", "needs_detail")
 LIVE_SECONDS = 180  # a run with no activity for this long is treated as finished
 
 
@@ -76,12 +69,7 @@ def _row(r: Any) -> dict[str, Any]:
     return {k: r[k] for k in r.keys()}
 
 
-def create_app(
-    inputs: Inputs,
-    db_path: Path,
-    token: str | None = None,
-    drafter_factory: Callable[[], Any] | None = None,
-) -> FastAPI:
+def create_app(inputs: Inputs, db_path: Path, token: str | None = None) -> FastAPI:
     token = token or secrets.token_urlsafe(32)  # 32 random bytes
     logsetup.add_secret(token)
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
@@ -241,46 +229,22 @@ def create_app(
         finally:
             d.close()
 
-    @app.get("/api/followups")
-    def followups() -> list[dict[str, Any]]:
-        d = db()
-        try:
-            today = clock.local_now().date().isoformat()
-            rows = d.conn.execute(
-                "SELECT id, name, title, company, profile_url, followup_draft, follow_up_date, job_title, accepted_at "
-                "FROM people WHERE status = 'accepted' AND follow_up_date IS NOT NULL AND follow_up_date <= ? "
-                "ORDER BY follow_up_date, accepted_at",
-                (today,),
-            )
-            from linkreach.drafting import email_subject
-
-            out = []
-            for r in rows:
-                item = _row(r)
-                item["email_subject"] = email_subject(cfg, r["job_title"])
-                out.append(item)
-            return out
-        finally:
-            d.close()
-
     @app.get("/api/companies")
     def companies() -> list[dict[str, Any]]:
+        """Every company in the database (from Jobs, or people saved by the old flow)."""
         d = db()
         try:
             out = []
-            names = [c.company_name for c in inputs.companies]
-            extra = [r[0] for r in d.conn.execute("SELECT DISTINCT company FROM people")]
-            for name in names + [n for n in extra if n.lower() not in {x.lower() for x in names}]:
+            names = sorted({r[0] for r in d.conn.execute("SELECT DISTINCT company FROM people")}, key=str.lower)
+            for name in names:
                 rows = d.conn.execute("SELECT status, sent_at, accepted_at FROM people WHERE company = ? COLLATE NOCASE", (name,)).fetchall()
                 sent = [r for r in rows if r["sent_at"]]
                 acc = [r for r in sent if r["accepted_at"] or r["status"] in _STAGE_REACHED["accepted"]]
                 last = max((r["sent_at"] for r in sent), default=None)
-                c = inputs.company(name)
                 out.append(
                     {
                         "company": name,
-                        "priority": c.priority if c else None,
-                        "collected": len(rows),
+                        "people": len(rows),
                         "sent": len(sent),
                         "accepted": len(acc),
                         "rate": (len(acc) / len(sent)) if sent else None,
@@ -355,215 +319,6 @@ def create_app(
                 raise HTTPException(404, "not found")
             d.update_fields(person_id, my_notes=body.my_notes)
             return {"ok": True}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/followup/done")
-    def followup_done(person_id: int) -> dict[str, Any]:
-        d = db()
-        try:
-            try:
-                d.set_status(person_id, "followed_up", source="dashboard", manual=True)
-            except TransitionError as exc:
-                raise HTTPException(400, str(exc)) from exc
-            d.log("dashboard", "info", person_id, "follow-up marked done")
-            return {"ok": True}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/followup/snooze")
-    def followup_snooze(person_id: int) -> dict[str, Any]:
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            base = max(date.fromisoformat(r["follow_up_date"]) if r["follow_up_date"] else clock.local_now().date(), clock.local_now().date())
-            new = (base + timedelta(days=5)).isoformat()
-            d.update_fields(person_id, follow_up_date=new)
-            d.log("dashboard", "info", person_id, f"follow-up snoozed to {new}")
-            return {"follow_up_date": new}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/followup/regenerate")
-    def followup_regenerate(person_id: int) -> dict[str, Any]:
-        from linkreach.drafting import Drafter
-
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            drafter = drafter_factory() if drafter_factory else Drafter(cfg)
-            try:
-                outcome = drafter.draft(r, d.recent_openers(5))
-            except Exception as exc:
-                raise HTTPException(502, f"drafting failed: {type(exc).__name__}") from exc
-            if outcome.status != "drafted":
-                raise HTTPException(422, "new draft failed validation; kept the old one")
-            d.update_fields(person_id, followup_draft=outcome.followup)
-            d.log("dashboard", "info", person_id, "follow-up regenerated")
-            return {"followup_draft": outcome.followup}
-        finally:
-            d.close()
-
-    # ---------- review queue: approve / decline / edit / redraft ----------
-    def _review_item(r: Any) -> dict[str, Any]:
-        from linkreach.drafting import email_subject
-
-        item = _row(r)
-        item["note_chars"] = len(r["note_draft"] or "")
-        item["followup_words"] = validate.word_count(r["followup_draft"] or "")
-        item["email_subject"] = email_subject(cfg, r["job_title"])
-        return item
-
-    @app.get("/api/review")
-    def review_queue() -> dict[str, Any]:
-        d = db()
-        try:
-            rows = d.people(list(REVIEWABLE))
-            rows.sort(
-                key=lambda r: (
-                    0 if r["status"] == "drafted" else 1,
-                    0 if r["is_alumni"] else 1,
-                    inputs.priority_of(r["company"]),
-                    r["id"],
-                )
-            )
-            return {
-                "items": [_review_item(r) for r in rows],
-                "limits": {"note_chars": cfg.note_max_chars, "followup_words": cfg.followup_max_words},
-            }
-        finally:
-            d.close()
-
-    @app.post("/api/validate")
-    def validate_preview(body: DraftBody) -> dict[str, Any]:
-        res = validate.check(cfg, body.note, body.followup)
-        return {
-            "ok": res.ok,
-            "errors": res.errors,
-            "note_chars": len(body.note),
-            "followup_words": validate.word_count(body.followup),
-        }
-
-    @app.post("/api/people/{person_id}/approve")
-    def approve(person_id: int) -> Any:
-        """Same rule as `linkreach review`: the stored draft is validated again first."""
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            if r["status"] != "drafted":
-                raise HTTPException(409, f"only drafted messages can be approved (this one is {r['status']})")
-            res = validate.check(cfg, r["note_draft"], r["followup_draft"])
-            if not res.ok:
-                d.update_fields(person_id, validation_errors="\n".join(res.errors))
-                d.set_status(person_id, "needs_detail", source="dashboard")
-                return JSONResponse({"error": "draft failed validation", "errors": res.errors}, status_code=422)
-            d.update_fields(person_id, validation_errors=None)
-            d.set_status(person_id, "approved", source="dashboard")
-            d.log("dashboard", "info", person_id, "approved in dashboard")
-            return {"person": _row(d.get(person_id))}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/decline")
-    def decline(person_id: int) -> dict[str, Any]:
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            if r["status"] not in (*REVIEWABLE, "approved", "collected"):
-                raise HTTPException(409, f"can't decline a {r['status']} person")
-            d.set_status(person_id, "skipped", source="dashboard", manual=True)
-            d.log("dashboard", "info", person_id, "declined in dashboard")
-            return {"person": _row(d.get(person_id))}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/unapprove")
-    def unapprove(person_id: int) -> dict[str, Any]:
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            if r["status"] != "approved" or r["send_attempted_at"]:
-                raise HTTPException(409, "only approved messages that haven't been sent can move back")
-            d.set_status(person_id, "drafted", source="dashboard")
-            d.log("dashboard", "info", person_id, "moved back to review")
-            return {"person": _row(d.get(person_id))}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/draft")
-    def save_draft(person_id: int, body: DraftBody) -> dict[str, Any]:
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            if r["status"] not in REVIEWABLE:
-                raise HTTPException(409, f"can't edit a {r['status']} draft")
-            note = " ".join(body.note.split())
-            followup = body.followup.strip()
-            res = validate.check(cfg, note, followup)
-            d.update_fields(person_id, note_draft=note, followup_draft=followup, validation_errors="\n".join(res.errors) or None)
-            d.set_status(person_id, "drafted" if res.ok else "needs_detail", source="dashboard")
-            return {"ok": res.ok, "errors": res.errors, "item": _review_item(d.get(person_id))}
-        finally:
-            d.close()
-
-    @app.post("/api/people/{person_id}/redraft")
-    def redraft(person_id: int, body: DetailBody) -> dict[str, Any]:
-        from linkreach import sanitize
-        from linkreach.drafting import Drafter, save_outcome
-
-        d = db()
-        try:
-            r = d.get(person_id)
-            if r is None:
-                raise HTTPException(404, "not found")
-            if r["status"] not in (*REVIEWABLE, "collected"):
-                raise HTTPException(409, f"can't redraft a {r['status']} person")
-            d.update_fields(person_id, user_detail=sanitize.clean_line(body.detail, 300))
-            drafter = drafter_factory() if drafter_factory else Drafter(cfg)
-            try:
-                outcome = drafter.draft(d.get(person_id), d.recent_openers(5))
-            except Exception as exc:
-                raise HTTPException(502, f"drafting failed: {type(exc).__name__}") from exc
-            save_outcome(d, cfg, outcome, source="dashboard")
-            return {"status": outcome.status, "errors": outcome.errors, "item": _review_item(d.get(person_id))}
-        finally:
-            d.close()
-
-    @app.get("/api/outbox")
-    def outbox() -> dict[str, Any]:
-        d = db()
-        try:
-            queued = d.people(["approved"])
-            queued.sort(
-                key=lambda r: (
-                    0 if r["send_attempted_at"] else 1,
-                    0 if r["is_alumni"] else 1,
-                    inputs.priority_of(r["company"]),
-                    r["id"],
-                )
-            )
-            sent = d.conn.execute(
-                "SELECT * FROM people WHERE sent_at IS NOT NULL OR status = 'failed' "
-                "ORDER BY COALESCE(sent_at, updated_at) DESC LIMIT 100"
-            ).fetchall()
-            caps = cap_status(d, cfg)
-            return {
-                "queued": [_row(r) for r in queued],
-                "sent": [_row(r) for r in sent],
-                "requests_left_today": caps.requests_left,
-            }
         finally:
             d.close()
 

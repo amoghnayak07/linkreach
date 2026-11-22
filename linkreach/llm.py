@@ -1,6 +1,6 @@
 """The one way linkreach calls Claude: a structured-output request on an injectable client.
 
-Every Claude call (drafting, Job extraction) goes through `structured_call` with a client
+Every Claude call (Job extraction, ranking, drafting) goes through `structured_call` with a client
 from `make_client`. `cfg.llm_backend` picks how Claude is reached: `api` (the Anthropic SDK
 with an API key) or `claude_code` (the local Claude Code CLI, signed in with the user's own
 account; see claude_code.py). Callers never know which one they have.
@@ -18,10 +18,6 @@ from linkreach.config import Config
 log = logsetup.get("llm")
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
-# Parallel drafting calls. Each Claude Code call starts a process, so it gets fewer.
-MAX_PARALLEL_API = 5
-MAX_PARALLEL_CLAUDE_CODE = 2
 
 
 class Refused(ValueError):
@@ -46,10 +42,6 @@ def make_client(cfg: Config) -> Any:
         raise RuntimeError("ANTHROPIC_API_KEY not found (run `linkreach set-key` or add it to .env)")
     # The SDK retries 408/409/429/5xx and connection errors with exponential backoff.
     return anthropic.Anthropic(api_key=key, max_retries=6, timeout=120.0)
-
-
-def max_parallel(cfg: Config) -> int:
-    return MAX_PARALLEL_CLAUDE_CODE if cfg.llm_backend == "claude_code" else MAX_PARALLEL_API
 
 
 def structured_call(

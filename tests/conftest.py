@@ -12,7 +12,6 @@ from linkreach import clock, credentials, gmail, logsetup
 from linkreach.commands.common import Ctx
 from linkreach.config import Inputs, load_inputs
 from linkreach.db import DB
-from linkreach.drafting import Drafter
 
 from tests.fakes import FakeClaude, FakeGmail, FakeSession, feed_page, job_responder
 
@@ -45,7 +44,6 @@ class Env:
 
         ctx = Ctx(inputs=self.inputs, db=self.db, session_factory=factory, sleep=lambda s: None, input_fn=input_fn)
         ctx.api_check = kw.pop("api_check", lambda model: (True, "fake key ok"))
-        ctx.drafter = kw.pop("drafter", Drafter(self.inputs.config, client=FakeClaude()))
         ctx.claude_client = kw.pop("claude_client", FakeClaude(job_responder()))  # never the real API in tests
         ctx.gmail = kw.pop("gmail", FakeGmail())  # never real Gmail; gmail=None means "no sign-in stored"
         ctx.factory_calls = calls  # type: ignore[attr-defined]
@@ -63,22 +61,9 @@ def write_inputs(d: Path, overrides: dict | None = None) -> None:
     cfg["doctor_profile_url"] = DOCTOR_URL
     cfg["chrome_profile_dir"] = str(d.parent / "home" / "chrome-profile")
     cfg["auto_window"] = {"days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "start": "00:00", "end": "23:59"}
-    # The old bulk flow's note template needs more than the new 200-character default.
-    # Goes away with that flow (ticket 11).
-    cfg["note_max_chars"] = 280
     for k, v in (overrides or {}).items():
         cfg[k] = v
     (d / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
-    (d / "companies.csv").write_text(
-        "company_name,linkedin_company_url,priority\n"
-        "Microsoft,https://www.linkedin.com/company/microsoft/,1\n"
-        "Salesforce,https://www.linkedin.com/company/salesforce/,2\n",
-        encoding="utf-8",
-    )
-    (d / "jobs.csv").write_text(
-        "company_name,job_title,job_url\nMicrosoft,Product Manager II,https://careers.microsoft.com/job/1\n",
-        encoding="utf-8",
-    )
 
 
 def use_config(env: Env, overrides: dict | None = None, automated: bool = True) -> None:

@@ -4,9 +4,11 @@ from datetime import timedelta
 
 from linkreach import clock
 from linkreach.db import DB
-from linkreach.drafting import assemble
 
-from tests.fakes import GOOD_PARTS, ProfilePage
+from tests.fakes import ProfilePage
+
+# A connection note on a Person, for the dormant send path (ADR-0001). Passes validation.
+PERSON_NOTE = "Hi {first}, your Azure onboarding post made YAML sound almost fun. I ran AI rollouts across 15+ enterprise clients at Bizom. Would like to connect."
 
 
 def url(slug: str) -> str:
@@ -16,13 +18,11 @@ def url(slug: str) -> str:
 def add_drafted(env, slug: str, name: str = "Jane Doe", company: str = "Microsoft", alumni: int = 0) -> int:
     db: DB = env.db
     pid = db.add_person(
-        name=name, title="Technical Recruiter", company=company, profile_url=url(slug), bucket="recruiter",
+        name=name, title="Technical Recruiter", company=company, profile_url=url(slug),
         is_alumni=alumni, context_1="Leads early-career hiring for Azure", context_2="Posted about onboarding",
     )
     assert pid is not None
-    row = db.get(pid)
-    note, followup = assemble(env.inputs.config, row, GOOD_PARTS)
-    db.update_fields(pid, note_draft=note, followup_draft=followup)
+    db.update_fields(pid, note_draft=PERSON_NOTE.format(first=name.split()[0]))
     db.set_status(pid, "drafted")
     return pid
 

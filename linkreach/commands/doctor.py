@@ -73,7 +73,7 @@ def default_check(cfg: Config) -> ClaudeCheck:
 
 
 def offline_checks(ctx: Ctx, api_check: ClaudeCheck | None = None) -> list[Check]:
-    checks: list[Check] = [Check("config", True, "config.yaml, companies.csv, jobs.csv valid")]
+    checks: list[Check] = [Check("config", True, "config.yaml valid")]
     ok, detail = (api_check or default_check(ctx.cfg))(ctx.cfg)
     checks.append(Check(check_name(ctx.cfg), ok, detail))
     checks.append(Check("db_integrity", ctx.db.integrity_ok(), "PRAGMA integrity_check"))

@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from linkreach.validate import validate_draft
+from linkreach.validate import validate_note
 
 RESUME = "https://example.com/naveen-resume.pdf"
 BANNED = ["synergy", "leverage", "circle back"]
 GOOD_NOTE = "Hi Jane, your onboarding post was a delight. I'm a PM with 3+ years in AI SaaS. Would like to connect."
-GOOD_FOLLOW = f"Dear Jane,\n\nThanks for connecting.\n\nMy resume: {RESUME}. Best,\nNaveen"
 
 
-def v(note=GOOD_NOTE, follow=GOOD_FOLLOW):
-    return validate_draft(note, follow, resume_url=RESUME, banned_phrases=BANNED)
+def v(note=GOOD_NOTE, note_max=200):
+    """The note-only check the dormant send path re-runs before typing a note."""
+    return validate_note(note, resume_url=RESUME, banned_phrases=BANNED, note_max_chars=note_max)
 
 
 def test_good_passes():
@@ -41,16 +41,15 @@ def test_bad_content_rejected(bad, needle):
     assert not res.ok and any(needle.lower() in e.lower() for e in res.errors), res.errors
 
 
-def test_resume_url_only_allowed_in_followup():
+def test_no_links_in_a_note_not_even_the_resume():
     assert not v(note=GOOD_NOTE + " " + RESUME).ok
-    assert v(follow=GOOD_FOLLOW).ok
-    assert not v(follow=GOOD_FOLLOW + " also https://other.example/x").ok
 
 
-def test_length_limits():
-    assert v(note="x" * 281).only_length
-    assert v(follow="word " * 151).only_length
-    assert v(note="x" * 280).ok
+def test_note_length_limit():
+    assert v(note="x" * 201).only_length
+    assert v(note="x" * 200).ok
+    assert v(note="x" * 280, note_max=300).ok
+    assert not v(note="  ").ok
 
 
 def test_ordinary_text_not_flagged():

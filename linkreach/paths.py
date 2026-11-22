@@ -21,7 +21,7 @@ def home() -> Path:
 
 
 def inputs_dir() -> Path:
-    """Where config.yaml, companies.csv, and jobs.csv are read from."""
+    """Where config.yaml and the Style file are read from."""
     override = os.environ.get("LINKREACH_INPUTS")
     return Path(override).expanduser() if override else Path.cwd()
 

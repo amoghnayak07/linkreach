@@ -370,12 +370,11 @@ def test_style_example_has_the_three_sections():
         assert heading in text
 
 
-def test_job_runs_without_the_csv_files(env, monkeypatch):
+def test_job_runs_through_the_cli_with_only_config_and_style(env, monkeypatch):
     from linkreach import cli
 
     write_style()
-    (env.inputs_dir / "companies.csv").unlink()
-    (env.inputs_dir / "jobs.csv").unlink()
+    assert sorted(p.name for p in env.inputs_dir.iterdir()) == ["config.yaml", "style.md"]
     s = session_with("jane-doe")
     overrides = {
         "session_factory": lambda cfg: s,

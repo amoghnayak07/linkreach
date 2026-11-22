@@ -16,32 +16,13 @@ caps:
 # with `linkreach job --picks N`.
 pick_target: 5
 
-per_company_limit: 6     # max people collected per company, ever
-combine_keywords: true   # one search per bucket ("a" OR "b") instead of one per keyword
-
 delay:                   # random wait between page loads (minimum 8 s)
   min_seconds: 8
   max_seconds: 25
 
-# Role buckets. Order matters: a title is matched against buckets top to bottom.
-buckets:
-  recruiter:
-    keywords: [technical recruiter, talent acquisition, university recruiter, early career recruiter]
-    angle: "Dec 2026 grad, PM/TPM roles, ask about open reqs"
-  ai_lead:
-    keywords: [AI product, ML product, AI platform]
-    angle: "AI PM background, ask about their roadmap"
-  leader:
-    keywords: [director of product, director of program, senior director product, head of product]
-    angle: "Specific product or org of theirs, ask for 15 minutes"
-  ic:
-    keywords: [senior product manager, principal product manager, group product manager, senior technical program manager]
-    angle: "Shared domain, ask about the team"
-
+# Alumni of this school rank first within a tier when `job` searches for Picks, and
+# drafts mention the shared school.
 alumni_school: Northeastern
-alumni_angle: "Lead with Northeastern, highest priority"
-
-exclude_title_keywords: [intern, associate, coordinator, assistant, freelance]
 
 background: |
   Naveen Murali
@@ -58,7 +39,7 @@ background: |
   - Builds independent AI projects (RAG/LangChain agents, credit risk models with
     SHAP/XGBoost)
 
-# Email drafts (and the old follow-up message) link to this instead of attaching a file.
+# Email drafts link to this instead of attaching a file.
 resume_url: https://example.com/naveen-murali-resume.pdf   # CHANGE ME
 
 banned_phrases: [synergy, leverage, passionate about disrupting, circle back, i hope this finds you well]
@@ -81,8 +62,9 @@ claude_code_timeout_seconds: 120   # claude_code only: give up on one call after
 use_refusal_fallbacks: true   # server-side fallback if the model declines a request
 
 note_max_chars: 200           # connection note limit: 200 on a free LinkedIn account, 300 with Premium
-followup_max_words: 150
-follow_up_delay_days: 5
+
+# These three only matter with connect_mode: automated (the dormant send/sync path).
+follow_up_delay_days: 5   # sync sets a follow-up date this many days after acceptance
 
 brake:
   min_sample: 30     # requests older than age_days before the brake can trip
@@ -102,27 +84,5 @@ headless: false
 # A public profile that `doctor` loads to check selectors. Pick one with an About section.
 doctor_profile_url: https://www.linkedin.com/in/williamhgates/   # CHANGE ME if you like
 
-# Code fills these templates; the model writes only the {opener}, {tie_line}, {point1}, {point2} pieces.
-templates:
-  note: >-
-    Hi {first_name}, {opener} I'm a PM with 3+ years in AI SaaS, finishing my MS at
-    Northeastern (Dec 2026). {tie_line} Would like to connect.
-  followup: |-
-    Dear {first_name},
-
-    {opener}
-
-    My name is Naveen Murali, and I'm a Product Manager with 3+ years of experience shipping AI-powered enterprise SaaS and ERP platforms. I'm currently completing a Master's in Engineering Management at Northeastern University, graduating December 2026. {role_sentence}
-
-    A few things pulled me toward reaching out:
-
-    1. {point1}
-    2. {point2}
-
-    My resume: {resume_url}. I hold U.S. work authorization through OPT and won't need employer sponsorship, as I'm undergoing a change in status ahead of naturalization in 2027. I'd welcome a quick call to talk through fit.
-
-    Best,
-    Naveen
-  role_with_job: "I'm writing about the {job_title} role at {company}."
-  role_without_job: "I'm exploring PM and TPM roles at {company}."
-  email_subject: "{job_title} - Naveen Murali"
+# How emails and connection notes should sound lives in style.md (the Style file),
+# next to this file. `linkreach init` creates it from the example.

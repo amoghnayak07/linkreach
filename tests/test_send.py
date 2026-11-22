@@ -191,12 +191,23 @@ def test_already_connected_not_sent(env):
     assert env.db.get(pid)["status"] == "accepted" and page.send_clicks == 0
 
 
-def test_alumni_and_priority_first(env):
+def test_alumni_first_then_oldest(env):
     sf = add_approved(env, "sf", company="Salesforce")
     ms = add_approved(env, "ms", company="Microsoft")
     al = add_approved(env, "al", company="Salesforce", alumni=1)
     order = [r["id"] for r in send.candidates(env.ctx())]
-    assert order == [al, ms, sf]
+    assert order == [al, sf, ms]
+
+
+def test_note_that_no_longer_validates_is_not_sent(env):
+    pid = add_approved(env, "jane")
+    env.db.update_fields(pid, note_draft="Hi Jane, see https://evil.example for more.")
+    s = base_session()
+    page = profile_for(s, "jane")
+    assert send.run(env.ctx(s), auto=True) == 0
+    row = env.db.get(pid)
+    assert row["status"] == "needs_detail" and "URL" in row["validation_errors"]
+    assert page.send_clicks == 0
 
 
 def test_sync_marks_accepted(env):

@@ -47,8 +47,8 @@ AUTO_TRANSITIONS: dict[str, set[str]] = {
     "dead": set(),
 }
 
-# Statuses a person may never be set to by hand (dashboard or `mark`).
-# `approved` must go through `review`, which validates the draft first.
+# Person statuses (the dormant send path, ADR-0001) that may never be set by hand.
+# `approved` meant "validated and approved in review"; that flow is gone, so nothing sets it now.
 MANUAL_FORBIDDEN = {"approved"}
 
 # Statuses that mean "a request went out".
@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS people (
     followed_up_at TEXT,
     my_notes TEXT,
     -- additions beyond the spec's column list:
-    user_detail TEXT,           -- one line of context you typed in `review`
+    user_detail TEXT,           -- one line of context you typed (old review flow)
     validation_errors TEXT,     -- why the last draft was rejected
     send_attempted_at TEXT,     -- written BEFORE clicking Send; prevents duplicate sends after a crash
     updated_at TEXT
@@ -378,7 +378,7 @@ class DB:
         old = row["status"]
         if manual:
             if new_status in MANUAL_FORBIDDEN:
-                raise TransitionError("approve drafts in `linkreach review`, which validates them first")
+                raise TransitionError("`approved` can't be set by hand: only a validated draft can be approved")
         elif new_status != old and new_status not in AUTO_TRANSITIONS.get(old, set()):
             raise TransitionError(f"cannot move from {old} to {new_status}")
         if new_status == old and not fields:

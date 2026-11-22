@@ -8,7 +8,6 @@ import logging
 import os
 import subprocess
 import threading
-import time
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable
@@ -20,11 +19,10 @@ from linkreach.claude_code import ClaudeCodeClient, ClaudeCodeError, RunResult
 from linkreach.commands import doctor, job
 from linkreach.commands.common import EXIT_DOCTOR
 from linkreach.config import ConfigError
-from linkreach.drafting import OUTPUT_SCHEMA, Drafter, run_draft
+from linkreach.jobdraft import DRAFT_SCHEMA, EmailDraft, JobDrafter, PickFacts
 
 from tests.conftest import use_config
-from tests.fakes import GOOD_PARTS
-from tests.test_draft import add_collected
+from tests.fakes import GOOD_EMAIL
 
 USAGE = {"input_tokens": 2, "cache_creation_input_tokens": 1108, "cache_read_input_tokens": 0, "output_tokens": 73}
 
@@ -53,7 +51,7 @@ class FakeRunner:
     """Records each call, including what the temp folder held while the call ran."""
 
     def __init__(self, respond: Callable[[list[str], bytes], RunResult] | RunResult | Exception | None = None):
-        self.respond = respond if respond is not None else (lambda argv, stdin: ok_result(dict(GOOD_PARTS)))
+        self.respond = respond if respond is not None else (lambda argv, stdin: ok_result(dict(GOOD_EMAIL)))
         self.calls: list[dict[str, Any]] = []
         self.lock = threading.Lock()
 
@@ -75,8 +73,23 @@ def use_claude_code(env, **extra) -> None:
     use_config(env, {"llm_backend": "claude_code", **extra}, automated=False)
 
 
-def cc_drafter(env, runner: FakeRunner) -> Drafter:
-    return Drafter(env.inputs.config, client=ClaudeCodeClient("claude", runner=runner))
+JOB = {"company": "Microsoft", "role_title": "Product Manager II", "team": "Azure Core", "location": "Redmond, WA",
+       "description": "Microsoft is hiring a PM to own Azure onboarding."}
+STYLE = "# Instructions\nBe brief.\n"
+
+
+def jane() -> PickFacts:
+    return PickFacts(name="Jane Doe", title="Engineering Manager, Azure Core", company="Microsoft",
+                     details=["Leads early-career hiring for Azure"])
+
+
+def draft_with(env, client) -> EmailDraft:
+    """One Pick's email draft through the Job flow's drafter."""
+    return JobDrafter(env.inputs.config, client, STYLE).draft(JOB, jane())
+
+
+def cc_draft(env, runner: FakeRunner) -> EmailDraft:
+    return draft_with(env, ClaudeCodeClient("claude", runner=runner))
 
 
 # ---------------------------------------------------------------- config / factory
@@ -127,14 +140,13 @@ def test_claude_code_path_override(tmp_path):
 def test_argv_is_locked_down(env):
     use_claude_code(env)
     runner = FakeRunner()
-    add_collected(env, "jane")
-    run_draft(env.inputs, env.db, cc_drafter(env, runner))
+    cc_draft(env, runner)
     call = runner.calls[0]
     sysfile = str(call["sysfile"])
     assert call["argv"] == [
         "claude", "-p",
         "--output-format", "json",
-        "--json-schema", json.dumps(OUTPUT_SCHEMA, separators=(",", ":")),
+        "--json-schema", json.dumps(DRAFT_SCHEMA, separators=(",", ":")),
         "--system-prompt-file", sysfile,
         "--model", "claude-sonnet-5-5",
         "--no-session-persistence",
@@ -154,8 +166,7 @@ def test_argv_is_locked_down(env):
 def test_prompts_go_through_stdin_and_a_file_not_argv(env):
     use_claude_code(env)
     runner = FakeRunner()
-    add_collected(env, "jane")
-    run_draft(env.inputs, env.db, cc_drafter(env, runner))
+    cc_draft(env, runner)
     call = runner.calls[0]
     argv_text = " ".join(call["argv"])
     assert "<profile_data>" in call["stdin"] and "Leads early-career" in call["stdin"]
@@ -165,15 +176,13 @@ def test_prompts_go_through_stdin_and_a_file_not_argv(env):
     assert "Bizom" not in argv_text
 
 
-def test_full_draft_run_reaches_drafted_without_api_only_flags(env):
+def test_full_draft_passes_validation_without_api_only_flags(env):
     use_claude_code(env)
     runner = FakeRunner()
-    pid = add_collected(env, "jane")
-    counts = run_draft(env.inputs, env.db, cc_drafter(env, runner))
-    assert counts["drafted"] == 1
-    row = env.db.get(pid)
-    assert row["status"] == "drafted"
-    assert row["note_draft"].startswith("Hi Jane, Your Azure onboarding post")
+    draft = cc_draft(env, runner)
+    assert draft.status == "ok", draft.errors
+    assert draft.body.startswith("Hi Jane,")
+    assert draft.note == GOOD_EMAIL["connection_note"]
     assert not any(a.startswith("--betas") or "fallback" in a for a in runner.calls[0]["argv"])
 
 
@@ -181,35 +190,9 @@ def test_api_backend_still_sends_fallbacks(env):
     from tests.fakes import FakeClaude
 
     fake = FakeClaude()
-    add_collected(env, "jane")
-    run_draft(env.inputs, env.db, Drafter(env.inputs.config, client=fake))
+    draft_with(env, fake)
     assert fake.calls[0]["fallbacks"] == "default"
     assert fake.calls[0]["betas"] == [llm.FALLBACK_BETA]
-
-
-def test_claude_code_drafts_at_most_two_at_a_time(env):
-    use_claude_code(env)
-    for i in range(8):
-        add_collected(env, f"p{i}", name=f"Pat{i} Q")
-    live = {"now": 0, "max": 0}
-    lock = threading.Lock()
-
-    def slow(argv, stdin):
-        with lock:
-            live["now"] += 1
-            live["max"] = max(live["max"], live["now"])
-        time.sleep(0.05)
-        with lock:
-            live["now"] -= 1
-        return ok_result(dict(GOOD_PARTS))
-
-    counts = run_draft(env.inputs, env.db, cc_drafter(env, FakeRunner(slow)))
-    assert counts["drafted"] == 8
-    assert live["max"] == 2
-
-
-def test_api_backend_keeps_five_parallel(env):
-    assert llm.max_parallel(env.inputs.config) == 5
 
 
 # ---------------------------------------------------------------- failures
@@ -228,32 +211,26 @@ def test_api_backend_keeps_five_parallel(env):
 )
 def test_failures_become_clear_draft_errors(env, respond, expected):
     use_claude_code(env)
-    pid = add_collected(env, "jane")
-    counts = run_draft(env.inputs, env.db, cc_drafter(env, FakeRunner(respond)))
-    assert counts["error"] == 1
-    row = env.db.get(pid)
-    assert row["status"] == "collected"
-    assert expected in row["validation_errors"]
-    assert "Traceback" not in row["validation_errors"]
+    draft = cc_draft(env, FakeRunner(respond))
+    assert draft.status == "error"  # not a validation failure: the Pick isn't sent to needs_detail
+    errors = "\n".join(draft.errors)
+    assert expected in errors
+    assert "Traceback" not in errors
 
 
 def test_unparseable_model_answer_is_an_error(env):
     use_claude_code(env)
     out = {"type": "result", "subtype": "success", "is_error": False, "result": "Sure! Here you go", "usage": USAGE}
-    pid = add_collected(env, "jane")
-    counts = run_draft(env.inputs, env.db, cc_drafter(env, FakeRunner(RunResult(0, json.dumps(out).encode(), b""))))
-    assert counts["error"] == 1
-    assert env.db.get(pid)["status"] == "collected"
+    draft = cc_draft(env, FakeRunner(RunResult(0, json.dumps(out).encode(), b"")))
+    assert draft.status == "error"
 
 
 def test_refusal_maps_to_needs_detail(env):
     use_claude_code(env)
     out = {"type": "result", "subtype": "success", "is_error": False, "stop_reason": "refusal", "result": "", "usage": USAGE}
-    pid = add_collected(env, "jane")
-    run_draft(env.inputs, env.db, cc_drafter(env, FakeRunner(RunResult(0, json.dumps(out).encode(), b""))))
-    row = env.db.get(pid)
-    assert row["status"] == "needs_detail"
-    assert "declined" in row["validation_errors"]
+    draft = cc_draft(env, FakeRunner(RunResult(0, json.dumps(out).encode(), b"")))
+    assert draft.status == "failed"  # what `job` turns into needs_detail
+    assert "declined" in "\n".join(draft.errors)
 
 
 def test_parse_result_maps_refusal_to_stop_reason():
@@ -276,8 +253,7 @@ def test_job_extraction_shows_the_claude_code_message(env, capsys):
 
 def test_usage_logged_but_not_prompts_or_outputs(env):
     use_claude_code(env)
-    add_collected(env, "jane")
-    run_draft(env.inputs, env.db, cc_drafter(env, FakeRunner()))
+    cc_draft(env, FakeRunner())
     for h in logging.getLogger("linkreach").handlers:
         h.flush()
     text = "\n".join(p.read_text(encoding="utf-8") for p in paths.logs_dir().glob("linkreach.log*"))

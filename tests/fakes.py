@@ -261,20 +261,10 @@ def captcha_page(url: str) -> FakePage:
 
 
 # ---------------- fake Claude ----------------
-GOOD_PARTS = {
-    "has_specific_detail": True,
-    "note_opener": "Your Azure onboarding post made YAML sound almost fun, which is a rare magic trick.",
-    "note_tie_line": "I ran AI rollouts across 15+ enterprise clients at Bizom.",
-    "followup_opener": "Anyone who can make cloud onboarding feel brisk deserves a medal.",
-    "point1": "AI platform delivery: I shipped an image-recognition module that lifted conversion 25%.",
-    "point2": "Enterprise scale: your team's push into regulated industries matches my ERP work.",
-}
-
-
 class FakeClaude:
     def __init__(self, responder: Callable[[dict], dict] | None = None):
         self.calls: list[dict[str, Any]] = []
-        self.responder = responder or (lambda kw: dict(GOOD_PARTS))
+        self.responder = responder or job_responder()
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
 
     def _create(self, **kw: Any) -> Any:
@@ -337,7 +327,7 @@ def request_kind(kw: dict) -> str:
         return "email"
     if "ranked" in props:
         return "rank"
-    return "legacy"
+    raise AssertionError(f"unknown Claude request with fields {sorted(props)}")
 
 
 _CARD_RE = re.compile(r"^\[(\d+)\] title: (.*) \| alumni: (yes|no)$")
@@ -391,6 +381,6 @@ def job_responder(
         if kind == "rank":
             r = rank if rank is not None else rank_by_keywords
             return r(kw) if callable(r) else dict(r)
-        return dict(GOOD_PARTS)
+        raise AssertionError(f"unexpected request kind {kind}")
 
     return answer

@@ -1,7 +1,7 @@
 """Claude calls for the Job flow: read a Job description, and write each Pick's email
 draft and Connection note.
 
-Prompt-injection defense, as in drafting.py:
+Prompt-injection defense:
 - The Job description and scraped profile text are cleaned (sanitize.clean) and capped.
 - Profile fields that look like instructions or carry URLs/emails never reach the prompt.
 - Untrusted text sits inside <job_description> / <profile_data> tags, and the system

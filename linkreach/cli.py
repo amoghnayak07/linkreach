@@ -15,9 +15,6 @@ from linkreach.db import DB, PICK_AUTO_ONLY, PICK_STATUSES
 
 MARK_PICK_CHOICES = [s for s in PICK_STATUSES if s not in PICK_AUTO_ONLY]
 
-# Commands that don't use companies.csv / jobs.csv, so they run without them.
-NO_CSV_COMMANDS = {"job", "redraft", "mark", "list"}
-
 
 def peek_connect_mode(argv: list[str] | None) -> str:
     """Read `connect_mode` from config.yaml before full validation, so help text can
@@ -38,13 +35,13 @@ def peek_connect_mode(argv: list[str] | None) -> str:
 
 
 def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="linkreach", description="LinkedIn outreach with hard safety rails.")
+    p = argparse.ArgumentParser(prog="linkreach", description="Job-driven outreach drafts with hard safety rails.")
     p.add_argument("--version", action="version", version=f"linkreach {__version__}")
-    p.add_argument("--inputs", type=Path, help="folder holding config.yaml, companies.csv, jobs.csv (default: current folder)")
+    p.add_argument("--inputs", type=Path, help="folder holding config.yaml and style.md (default: current folder)")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="command", required=True, metavar="command")
 
-    sub.add_parser("init", help="copy example config.yaml, style.md, companies.csv, jobs.csv here")
+    sub.add_parser("init", help="copy example config.yaml and style.md here")
     j = sub.add_parser("job", help="paste a job description and profile links; get an email draft and connection note per Pick")
     j.add_argument("--file", type=Path, help="read the job description from this file instead of pasting it")
     j.add_argument("--picks", type=int, metavar="N", help="Pick target for this run (default: pick_target in config.yaml)")
@@ -54,10 +51,6 @@ def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     g = sub.add_parser("gmail-login", help="sign in to Gmail (create-drafts scope only) with your own OAuth desktop client")
     g.add_argument("--client-file", type=Path, required=True, help="the OAuth client .json you downloaded from Google Cloud")
     sub.add_parser("login", help="open the dedicated Chrome profile so you can sign in to LinkedIn by hand")
-    c = sub.add_parser("collect", help="find people at each company")
-    c.add_argument("--dry-run", action="store_true", help="print planned searches; open nothing")
-    sub.add_parser("draft", help="write notes and follow-ups for collected people")
-    sub.add_parser("review", help="approve, edit, or skip drafts")
     s = sub.add_parser("send", help="send approved connection requests")
     s.add_argument("--auto", action="store_true", help="click Send without asking (runs doctor first)")
     s.add_argument("--override-brake", action="store_true", help="allow --auto even when the acceptance brake is tripped")
@@ -104,7 +97,7 @@ def main(argv: list[str] | None = None, ctx_overrides: dict | None = None) -> in
         return misc.gmail_login(args.client_file)
 
     try:
-        inputs = load_inputs(require_csvs=args.command not in NO_CSV_COMMANDS)
+        inputs = load_inputs()
     except ConfigError as exc:
         console.print(f"[bold red]linkreach refuses to start: {len(exc.problems)} problem(s) in your input files[/]")
         for prob in exc.problems:
@@ -132,41 +125,6 @@ def _dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
         from linkreach.commands import redraft
 
         return redraft.run(ctx, job_id=args.job)
-    if cmd == "collect":
-        from linkreach.commands import collect
-
-        return collect.run(ctx, dry_run=args.dry_run)
-    if cmd == "draft":
-        from linkreach import drafting
-        from linkreach.commands.common import handle_run_errors, run_start
-
-        def _draft() -> int:
-            run_start(ctx.db, "draft")
-            try:
-                drafter = ctx.drafter or drafting.Drafter(ctx.cfg)
-                _ = drafter.client  # type: ignore[attr-defined]  # fail fast if no key / no `claude`
-            except RuntimeError as exc:
-                console.print(f"[red]{exc}[/]")
-                return EXIT_CONFIG
-
-            def show(row, outcome):
-                tag = {"drafted": "[green]drafted[/]", "needs_detail": "[yellow]needs_detail[/]"}.get(outcome.status, "[red]error[/]")
-                console.print(f"{tag} {escape(row['name'])} ({escape(row['company'])})")
-
-            counts = drafting.run_draft(ctx.inputs, ctx.db, drafter, on_result=show)  # type: ignore[arg-type]
-            console.print(f"[bold]drafted {counts.get('drafted', 0)}, needs_detail {counts.get('needs_detail', 0)}, errors {counts.get('error', 0)}[/]")
-            return 0
-
-        return handle_run_errors(ctx, "draft", _draft)
-    if cmd == "review":
-        from linkreach.commands import review
-        from linkreach.commands.common import handle_run_errors, run_start
-
-        def _review() -> int:
-            run_start(ctx.db, "review")
-            return review.run(ctx)
-
-        return handle_run_errors(ctx, "review", _review)
     if cmd == "send":
         from linkreach.commands import send
 

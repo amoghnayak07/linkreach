@@ -11,10 +11,8 @@ from tests.conftest import write_inputs
 
 
 def test_valid_inputs_load(env):
-    inp = env.inputs
-    assert [c.company_name for c in inp.companies] == ["Microsoft", "Salesforce"]
-    assert inp.job_for("microsoft").job_title == "Product Manager II"
-    assert inp.config.caps.daily_requests == 20
+    assert env.inputs.config.caps.daily_requests == 20
+    assert not (env.inputs_dir / "companies.csv").exists()  # config.yaml is the only input file
 
 
 def test_all_errors_reported_at_once(env):
@@ -22,27 +20,49 @@ def test_all_errors_reported_at_once(env):
     cfg = yaml.safe_load((d / "config.yaml").read_text())
     del cfg["resume_url"]
     cfg["caps"]["daily_requests"] = 50  # above the hard ceiling
+    cfg["doctor_profile_url"] = "not-a-profile"
     (d / "config.yaml").write_text(yaml.safe_dump(cfg))
-    (d / "companies.csv").write_text("company_name,linkedin_company_url\nAcme,https://www.linkedin.com/company/acme/\n")
-    (d / "jobs.csv").write_text("company_name,job_title,job_url\nAcme,PM,not-a-url\n")
     with pytest.raises(ConfigError) as exc:
         load_inputs(d)
     text = "\n".join(exc.value.problems)
     assert "resume_url" in text
     assert "daily_requests" in text
-    assert "companies.csv: missing required column(s): priority" in text
-    assert "job_url" in text
-    assert len(exc.value.problems) >= 4
+    assert "doctor_profile_url" in text
+    assert len(exc.value.problems) >= 3
 
 
-def test_bad_company_row_rejected(env):
-    (env.inputs_dir / "companies.csv").write_text(
-        "company_name,linkedin_company_url,priority\nAcme,https://acme.com,5\n"
-    )
+OLD_FLOW_SETTINGS = {
+    "buckets": {"recruiter": {"keywords": ["technical recruiter"], "angle": "ask about open reqs"}},
+    "per_company_limit": 6,
+    "combine_keywords": True,
+    "alumni_angle": "Lead with Northeastern",
+    "exclude_title_keywords": ["intern"],
+    "followup_max_words": 150,
+    "templates": {"note": "Hi {first_name}, {opener} {tie_line}"},
+}
+
+
+def test_old_bulk_flow_settings_are_named_and_rejected(env):
+    write_inputs(env.inputs_dir, OLD_FLOW_SETTINGS)
     with pytest.raises(ConfigError) as exc:
         load_inputs(env.inputs_dir)
-    text = "\n".join(exc.value.problems)
-    assert "linkedin_company_url" in text and "priority" in text
+    problems = exc.value.problems
+    assert len(problems) == len(OLD_FLOW_SETTINGS)  # one clear line each, no pydantic noise
+    for key in OLD_FLOW_SETTINGS:
+        assert any(p.startswith(f"config.yaml: {key}: removed setting") and "delete it" in p for p in problems), key
+
+
+def test_old_config_stops_the_cli_with_the_removed_keys(env, capsys):
+    write_inputs(env.inputs_dir, {"buckets": OLD_FLOW_SETTINGS["buckets"], "templates": OLD_FLOW_SETTINGS["templates"]})
+    assert main(["list"]) == 2
+    out = capsys.readouterr().out
+    assert "buckets: removed setting" in out and "templates: removed setting" in out and "style.md" in out
+
+
+def test_leftover_csvs_are_ignored(env):
+    (env.inputs_dir / "companies.csv").write_text("company_name\nnot,even,valid\n")
+    (env.inputs_dir / "jobs.csv").write_text("garbage")
+    assert load_inputs(env.inputs_dir).config.pick_target == 5
 
 
 def test_default_chrome_profile_refused(env):

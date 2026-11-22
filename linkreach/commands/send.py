@@ -37,7 +37,6 @@ def candidates(ctx: Ctx) -> list:
         key=lambda r: (
             0 if r["send_attempted_at"] else 1,  # resolve interrupted attempts first
             0 if r["is_alumni"] else 1,
-            ctx.inputs.priority_of(r["company"]),
             r["id"],
         )
     )
@@ -72,7 +71,7 @@ def run(ctx: Ctx, auto: bool = False, override_brake: bool = False) -> int:
         return 0
     rows = candidates(ctx)
     if not rows:
-        console.print("No approved drafts to send. Run `linkreach review` first.")
+        console.print("No approved connection notes to send.")
         return 0
 
     mode = "auto" if auto else "manual"
@@ -103,13 +102,11 @@ def _send(ctx: Ctx, rows: list, auto: bool, mode: str) -> int:
                 continue
             pid = int(row["id"])
             note = row["note_draft"] or ""
-            res = validate.validate_draft(
+            res = validate.validate_note(
                 note,
-                row["followup_draft"],
                 resume_url=cfg.resume_url,
                 banned_phrases=cfg.banned_phrases,
                 note_max_chars=cfg.note_max_chars,
-                followup_max_words=cfg.followup_max_words,
             )
             if not res.ok:
                 db.update_fields(pid, validation_errors="\n".join(res.errors))

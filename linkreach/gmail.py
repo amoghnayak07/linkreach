@@ -233,6 +233,10 @@ def _pkce() -> tuple[str, str]:
 
 
 class _Callback(http.server.BaseHTTPRequestHandler):
+    # Browsers open spare connections that never send a request; without a read timeout one
+    # of those would block the real redirect queued behind it.
+    timeout = 3
+
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         if "code" not in query and "error" not in query:
@@ -251,6 +255,11 @@ class _Callback(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class _LoopbackServer(http.server.HTTPServer):
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        pass  # an idle or dropped browser connection: ignore it quietly, no traceback
+
+
 def login(client_file: Path, open_browser: Callable[[str], Any], timeout: float = LOGIN_TIMEOUT,
           post_form: Callable[[str, dict[str, str]], dict[str, Any]] = _post_form) -> StoredAuth:
     """Installed-app sign-in: open Google's consent page, catch the redirect on a loopback
@@ -260,7 +269,7 @@ def login(client_file: Path, open_browser: Callable[[str], Any], timeout: float 
     verifier, challenge = _pkce()
     state = secrets.token_urlsafe(24)
 
-    server = http.server.HTTPServer(("127.0.0.1", 0), _Callback)
+    server = _LoopbackServer(("127.0.0.1", 0), _Callback)
     server.result = {}  # type: ignore[attr-defined]
     server.timeout = 1
     redirect = f"http://127.0.0.1:{server.server_address[1]}/"
