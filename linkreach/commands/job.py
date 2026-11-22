@@ -7,15 +7,18 @@ here; the work after that is `jobflow.process_job`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from rich.markup import escape
 
-from linkreach import jobflow, llm, logsetup, sanitize
+from linkreach import jobflow, jobsearch, llm, logsetup, sanitize
 from linkreach.claude_code import ClaudeCodeError
 from linkreach.commands.common import EXIT_CONFIG, EXIT_OK, Ctx, console, handle_run_errors
+from linkreach.config import MAX_PICK_TARGET
 from linkreach.jobdraft import JobFields, clean_description, extract_job
+from linkreach.jobsearch import FoundPick
 
 log = logsetup.get("job")
 
@@ -100,40 +103,140 @@ def _add_links(text: str, urls: list[str]) -> None:
             urls.append(url)
 
 
-def confirm_links(ctx: Ctx, urls: list[str]) -> list[str]:
-    """Let the user remove and add links before any profile is read."""
+@dataclass
+class Choice:
+    """One entry on the confirmation list: a Supplied pick (found is None) or a Found pick."""
+
+    url: str
+    found: FoundPick | None = None
+
+
+def _add_choices(text: str, choices: list[Choice]) -> None:
+    """Pasted links become Supplied picks, listed after the other Supplied ones."""
+    urls = [c.url for c in choices]
+    before = len(urls)
+    _add_links(text, urls)
+    supplied = [c for c in choices if c.found is None] + [Choice(u) for u in urls[before:]]
+    choices[:] = supplied + [c for c in choices if c.found is not None]
+
+
+def _show_choice(ctx: Ctx, i: int, c: Choice) -> None:
+    if c.found is None:
+        console.print(f"  {i}. {escape(c.url)}  [dim]supplied[/]", soft_wrap=True)
+    else:
+        f = c.found
+        tags = f"found · {f.tier_label}" + (" · alumni" if f.alumni else "")
+        console.print(f"  {i}. [bold]{escape(f.name)}[/], {escape(f.title)}  [cyan]{escape(tags)}[/]", soft_wrap=True)
+        console.print(f"     {escape(c.url)}", soft_wrap=True)
+        console.print(f"     why: {escape(f.reason)}", soft_wrap=True)
+    for flag in jobflow.contact_flags(ctx.db, c.url):
+        console.print(f"     [yellow]{escape(flag)}[/] (kept unless you remove it)", soft_wrap=True)
+
+
+def confirm_picks(ctx: Ctx, choices: list[Choice]) -> list[Choice]:
+    """Supplied picks first, then Found picks with tier and reason. The user removes and
+    adds before any profile is read."""
+    choices = [c for c in choices if c.found is None] + [c for c in choices if c.found is not None]
     while True:
-        if not urls:
-            ans = _ask(ctx, "No profile links yet. Paste a link to add, or press Enter to stop: ")
+        if not choices:
+            ans = _ask(ctx, "No Picks yet. Paste a link to add, or press Enter to stop: ")
             if not ans.strip():
                 return []
-            _add_links(ans, urls)
+            _add_choices(ans, choices)
             continue
-        console.print(f"[bold]Picks ({len(urls)}):[/]")
-        for i, u in enumerate(urls, start=1):
-            console.print(f"  {i}. {escape(u)}", soft_wrap=True)
-            for flag in jobflow.contact_flags(ctx.db, u):
-                console.print(f"     [yellow]{escape(flag)}[/] (kept unless you remove it)", soft_wrap=True)
-        ans = _ask(ctx, "Enter to start, -N to remove link N, paste a link to add, q to quit: ").strip()
+        console.print(f"[bold]Picks ({len(choices)}):[/]")
+        for i, c in enumerate(choices, start=1):
+            _show_choice(ctx, i, c)
+        ans = _ask(ctx, "Enter to start, -N to remove Pick N, paste a link to add, q to quit: ").strip()
         if not ans:
-            return urls
+            return choices
         if ans.lower() == "q":
             raise Quit()
         if ans.startswith("-") and ans[1:].strip().isdigit():
             n = int(ans[1:].strip())
-            if 1 <= n <= len(urls):
-                console.print(f"  removed {escape(urls.pop(n - 1))}")
+            if 1 <= n <= len(choices):
+                console.print(f"  removed {escape(choices.pop(n - 1).url)}")
             else:
                 console.print(f"  [yellow]no Pick number {n}[/]")
             continue
-        _add_links(ans, urls)
+        _add_choices(ans, choices)
+
+
+def ask_company_page(ctx: Ctx, company: str) -> str | None:
+    """The LinkedIn company page to search, confirmed by the user before any page view.
+    Offers the page used last time for this company, else a guess from the name.
+    Returns the slug, or None to skip the search."""
+    default = ctx.db.get_company_slug(company) or jobflow.guess_company_slug(company)
+    console.print(
+        f"To find more Picks, linkreach searches the current employees of {escape(company)}'s LinkedIn page. "
+        "Press Enter to keep the page shown, paste the right company page link, or type - to skip the search."
+    )
+    for _ in range(COMPANY_TRIES):
+        shown = jobflow.company_page_url(default) if default else ""
+        ans = _ask(ctx, f"  Company page [{shown}]: ").strip()
+        if ans == "-":
+            return None
+        if not ans:
+            if default:
+                return default
+            continue
+        slug = jobflow.parse_company_page(ans)
+        if slug:
+            return slug
+        console.print("  [yellow]That isn't a LinkedIn company page link (like https://www.linkedin.com/company/contoso/).[/]")
+    return None
+
+
+def search(ctx: Ctx, fields: JobFields, urls: list[str], need: int, client: Any) -> tuple[list[FoundPick], int | None]:
+    """Run the search for `need` Found picks. Returns (found, None) to carry on, or
+    ([], exit code) when a stop ended the run before anything was saved."""
+    slug = ask_company_page(ctx, fields.company)
+    if slug is None:
+        console.print("No search; going on with the links you gave.")
+        return [], None
+    job = {"company": fields.company, "role_title": fields.role_title, "team": fields.team, "location": fields.location}
+    holder: dict[str, jobsearch.SearchOutcome] = {}
+
+    def work() -> int:
+        holder["out"] = jobflow.search_found_picks(ctx, job, slug, need, set(urls), client)
+        return EXIT_OK
+
+    console.print(f"Searching for up to {need} more Pick{'s' if need != 1 else ''} at {escape(fields.company)}...")
+    code = handle_run_errors(ctx, jobflow.COMMAND, work)
+    out = holder.get("out")
+    if out is None:
+        console.print("Stopped during the search. Nothing was saved.")
+        return [], code
+    if not out.company_id:
+        console.print(
+            f"[yellow]Couldn't read the company id from {escape(jobflow.company_page_url(slug))}, so no search was run.[/] "
+            "Check the company page link next time."
+        )
+        return [], None
+    ctx.db.set_company_slug(fields.company, slug)
+    size = f"{out.employees:,} employees" if out.employees is not None else "size unknown"
+    console.print(
+        f"Ran {out.searches} search{'es' if out.searches != 1 else ''} ({size}); "
+        f"{out.cards} new people considered, {len(out.picks)} picked."
+    )
+    if not out.small_company:
+        console.print(f"  CTO and CEO left out: only considered at companies with {jobsearch.SMALL_COMPANY_MAX} or fewer employees.")
+    if out.ranked_by == "titles":
+        console.print("  [yellow]Claude couldn't rank them, so they're ordered by title alone.[/]")
+    if len(out.picks) < need:
+        console.print(f"  [yellow]Found {len(out.picks)} of the {need} wanted.[/]")
+    return out.picks, None
 
 
 def _client(ctx: Ctx) -> Any:
     return ctx.claude_client if ctx.claude_client is not None else llm.make_client(ctx.cfg)
 
 
-def run(ctx: Ctx, file: Path | None = None) -> int:
+def run(ctx: Ctx, file: Path | None = None, picks: int | None = None) -> int:
+    target = ctx.cfg.pick_target if picks is None else picks
+    if not 0 <= target <= MAX_PICK_TARGET:
+        console.print(f"[red]--picks must be between 0 and {MAX_PICK_TARGET}.[/]")
+        return EXIT_CONFIG
     try:
         style = jobflow.load_style()
     except jobflow.StyleMissing as exc:
@@ -165,17 +268,29 @@ def run(ctx: Ctx, file: Path | None = None) -> int:
     if confirmed is None:
         return EXIT_CONFIG
 
+    urls = collect_links(ctx)
+    choices = [Choice(u) for u in urls]
+    need = target - len(urls)
+    if need > 0:
+        found, stop_code = search(ctx, confirmed, urls, need, client)
+        if stop_code is not None:
+            return stop_code
+        choices += [Choice(f.profile_url, f) for f in found]
+    elif urls:
+        console.print(f"Your {len(urls)} link{'s meet' if len(urls) != 1 else ' meets'} the Pick target of {target}; no search needed.")
+
     try:
-        urls = confirm_links(ctx, collect_links(ctx))
+        choices = confirm_picks(ctx, choices)
     except Quit:
         console.print("Quit before reading any profile. Nothing was saved.")
         return EXIT_OK
-    if not urls:
+    if not choices:
         console.print("No Picks, so nothing to read or draft. Nothing was saved.")
         return EXIT_OK
 
     job_id = jobflow.create_job(ctx.db, confirmed, description)
-    jobflow.add_supplied_picks(ctx.db, job_id, urls)
+    jobflow.add_supplied_picks(ctx.db, job_id, [c.url for c in choices if c.found is None])
+    jobflow.add_found_picks(ctx.db, job_id, [c.found for c in choices if c.found is not None])
     console.print(f"Job #{job_id} saved: {escape(confirmed.role_title or 'role')} at {escape(confirmed.company)}.")
 
     report = jobflow.JobReport(job_id=job_id)
@@ -183,6 +298,8 @@ def run(ctx: Ctx, file: Path | None = None) -> int:
     def show(r: jobflow.PickResult) -> None:
         tag = {"drafted": "[green]drafted[/]", "no_email": "[green]drafted[/] (no email)"}.get(r.status, "[red]not drafted[/]")
         console.print(f"{tag} {escape(r.name)}")
+        for w in r.warnings:
+            console.print(f"  [yellow]warning:[/] {escape(w)}", soft_wrap=True)
 
     def work() -> int:
         jobflow.process_job(ctx, job_id, report, client, style, ctx.email_finder, on_pick=show)  # type: ignore[arg-type]
@@ -199,6 +316,8 @@ def print_report(report: jobflow.JobReport) -> None:
     for r in report.results:
         console.print(f"\n[bold]{escape(r.name)}[/]", soft_wrap=True)
         console.print(escape(r.profile_url), soft_wrap=True)
+        for w in r.warnings:
+            console.print(f"[yellow]warning:[/] {escape(w)}", soft_wrap=True)
         if r.note:
             console.print(escape(r.note), soft_wrap=True)
         else:

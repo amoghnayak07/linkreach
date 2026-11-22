@@ -23,6 +23,7 @@ from linkreach import paths
 MAX_DAILY_VIEWS = 40
 MAX_DAILY_REQUESTS = 20
 MAX_WEEKLY_REQUESTS = 80
+MAX_PICK_TARGET = 15
 
 DEFAULT_BANNED_PHRASES = [
     "synergy",
@@ -125,6 +126,8 @@ class Config(Strict):
     # ADR-0001: automated connection requests are off unless this is "automated".
     connect_mode: ConnectMode = "manual"
     caps: Caps = Caps()
+    # `job`: Found picks fill up to this many Picks; Supplied picks are never cut to fit it.
+    pick_target: int = Field(5, ge=1, le=MAX_PICK_TARGET)
     per_company_limit: int = Field(6, ge=1, le=50)
     combine_keywords: bool = True  # one search per bucket ("a" OR "b") instead of one per keyword
     delay: Delay = Delay()

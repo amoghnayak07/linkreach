@@ -43,6 +43,7 @@ class Profile:
     about: str = ""
     featured: str = ""
     education: str = ""
+    topcard: str = ""
     first_degree: bool = False
     pending: bool = False
     has_actions: bool = False
@@ -71,6 +72,7 @@ class LinkedIn:
         self.sleep = sleep
         self._loaded_once = False
         self._company_ids: dict[str, str | None] = {}
+        self._company_sizes: dict[str, int | None] = {}
 
     # ---------- navigation ----------
     def visit(self, url: str, person_id: int | None = None) -> None:
@@ -115,15 +117,23 @@ class LinkedIn:
     def company_id(self, company_slug: str) -> str | None:
         """Numeric company id. Read from the company's People tab once (one page view), then
         cached in the database for 90 days."""
+        return self.company_info(company_slug)[0]
+
+    def company_info(self, company_slug: str) -> tuple[str | None, int | None]:
+        """(numeric company id, employee count). Both come from the one People-tab view the id
+        lookup needs; either is None when it can't be read. Cached together for 90 days."""
         if company_slug not in self._company_ids:
             cid = self.db.get_company_id(company_slug)
+            size = self.db.get_company_size(company_slug) if cid else None
             if cid is None:
                 self.visit(S.COMPANY_PEOPLE_URL.format(slug=quote_plus(company_slug), keywords=""))
                 cid = parse_company_id(self.s.attr(S.COMPANY_ID_LINK, "href", timeout_ms=8000))
+                size = parse_company_size(self.s.body_text() or "")
                 if cid:
-                    self.db.set_company_id(company_slug, cid)
+                    self.db.set_company_id(company_slug, cid, size)
             self._company_ids[company_slug] = cid
-        return self._company_ids[company_slug]
+            self._company_sizes[company_slug] = size
+        return self._company_ids[company_slug], self._company_sizes.get(company_slug)
 
     def search_company_people(self, company_slug: str, keywords: str) -> list[Candidate]:
         cid = self.company_id(company_slug)
@@ -161,9 +171,10 @@ class LinkedIn:
         if not p.has_actions:
             p.missing.append("PROFILE_ACTIONS")
         p.name = sanitize.clean_line(name or "", 120)
-        p.headline = sanitize.clean(
-            self.s.text(S.PROFILE_HEADLINE) or pick_headline(self.s.texts(S.PROFILE_TOPCARD_PARAS), name or "")
-        )
+        paras = self.s.texts(S.PROFILE_TOPCARD_PARAS)
+        p.headline = sanitize.clean(self.s.text(S.PROFILE_HEADLINE) or pick_headline(paras, name or ""))
+        # The top card's lines include the current company; `job` checks Supplied picks against it.
+        p.topcard = sanitize.clean(" | ".join(paras[:12]), 1000)
         p.about = sanitize.clean(self.s.text(S.PROFILE_ABOUT) or "")
         feats = [t for t in self.s.texts(S.PROFILE_FEATURED) if len(t.strip()) > 20] or self.s.texts(S.PROFILE_FEATURED)
         p.featured = sanitize.clean(feats[0] if feats else "")
@@ -247,6 +258,29 @@ def parse_company_id(href: str | None) -> str | None:
     """'...currentCompany=%5B%221035%22%5D...' -> '1035'."""
     m = re.search(r'currentCompany=\["?(\d+)', unquote(href or ""))
     return m.group(1) if m else None
+
+
+_NUM = r"(\d[\d,]*(?:\.\d+)?)\s*([KkMm])?"
+_EMPLOYEES_RE = re.compile(_NUM + r"\s*(?:\+|[-–]\s*" + _NUM + r")?\s+employees\b", re.I)
+_MEMBERS_RE = re.compile(_NUM + r"\s+associated members\b", re.I)
+
+
+def _count(num: str, suffix: str | None) -> int:
+    value = float(num.replace(",", ""))
+    mult = {"k": 1_000, "m": 1_000_000}.get((suffix or "").lower(), 1)
+    return int(value * mult)
+
+
+def parse_company_size(text: str) -> int | None:
+    """Employee count from a company page's text. A range counts as its upper end:
+    '51-200 employees' -> 200, '1,001-5,000 employees' -> 5000, '10K+ employees' -> 10000.
+    Falls back to the People tab's '2,345 associated members'. None if neither is there."""
+    m = _EMPLOYEES_RE.search(text or "")
+    if m:
+        lo, lo_sfx, hi, hi_sfx = m.groups()
+        return _count(hi, hi_sfx) if hi else _count(lo, lo_sfx)
+    m = _MEMBERS_RE.search(text or "")
+    return _count(*m.groups()) if m else None
 
 
 def pick_headline(paragraphs: list[str], name: str) -> str:

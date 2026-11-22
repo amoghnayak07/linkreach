@@ -19,6 +19,7 @@ from linkreach.commands.common import Ctx, FailStreak, linkedin_session
 from linkreach.db import DB, normalize_profile_url
 from linkreach.emailfinder import EmailFinder, NoFinder
 from linkreach.jobdraft import JobDrafter, JobFields, PickFacts
+from linkreach.jobsearch import FoundPick, SearchOutcome, find_picks
 from linkreach.linkedin import Profile
 from linkreach.safety import cap_status
 
@@ -81,6 +82,36 @@ def contact_flags(db: DB, profile_url: str, exclude_job_id: int | None = None) -
     return flags
 
 
+_SLUG_RE = re.compile(r"^[A-Za-z0-9_\-%.]{1,100}$")
+_COMPANY_LINK_RE = re.compile(r"^(?:https?://)?(?:[a-z]+\.)?linkedin\.com/company/([^/?#\s]+)", re.I)
+
+
+def guess_company_slug(company: str) -> str:
+    """'Goldman Sachs' -> 'goldman-sachs'. Only ever offered for the user to confirm."""
+    return re.sub(r"[^a-z0-9]+", "-", (company or "").lower()).strip("-")[:100]
+
+
+def parse_company_page(text: str) -> str | None:
+    """A company page link (or a bare slug) -> its slug, or None if it isn't one."""
+    raw = (text or "").strip().strip("<>\"'")
+    m = _COMPANY_LINK_RE.match(raw)
+    slug = m.group(1) if m else raw
+    return slug.lower() if _SLUG_RE.match(slug) and "/" not in slug else None
+
+
+def company_page_url(slug: str) -> str:
+    return f"https://www.linkedin.com/company/{slug}/"
+
+
+def search_found_picks(
+    ctx: Ctx, job: dict[str, Any], company_slug: str, need: int, exclude_urls: set[str], client: Any
+) -> SearchOutcome:
+    """Search LinkedIn for up to `need` Found picks. Opens the browser; page views count
+    against the daily cap and the stop rules apply. Saves nothing about the Job itself."""
+    with linkedin_session(ctx, COMMAND, f"search need={need}") as li:
+        return find_picks(li, ctx.db, ctx.cfg, client, job, company_slug, need, exclude_urls)
+
+
 def create_job(db: DB, fields: JobFields, description: str) -> int:
     return db.add_job(
         company=fields.company,
@@ -105,6 +136,37 @@ def add_supplied_picks(db: DB, job_id: int, urls: list[str]) -> list[int]:
     return ids
 
 
+def add_found_picks(db: DB, job_id: int, found: list[FoundPick]) -> list[int]:
+    """Save confirmed Found picks with their tier and reason, after the Supplied ones."""
+    job = db.get_job(job_id)
+    assert job is not None
+    ids = []
+    for f in found:
+        person_id = db.ensure_person(f.profile_url, name=f.name, company=job["company"], title=f.title, is_alumni=f.alumni)
+        pick_id = db.add_pick(job_id, person_id, "found", tier=f.tier, reason=f.reason)
+        if pick_id is not None:
+            ids.append(pick_id)
+    return ids
+
+
+_COMPANY_SUFFIXES = {"inc", "llc", "ltd", "corp", "corporation", "co", "company", "plc", "gmbh", "group", "the"}
+
+
+def _company_key(name: str) -> str:
+    words = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return " ".join(w for w in words if w not in _COMPANY_SUFFIXES)
+
+
+def company_mismatch(company: str, profile: Profile) -> bool:
+    """True when the profile's headline and top card have text but don't mention the Job's
+    company. A profile with no top-card text at all isn't flagged: there's nothing to go on."""
+    key = _company_key(company)
+    seen = " ".join(v for v in (profile.headline, profile.topcard) if v)
+    if not key or not seen.strip():
+        return False
+    return f" {key} " not in f" {_company_key(seen)} "
+
+
 @dataclass
 class PickResult:
     pick_id: int
@@ -114,6 +176,7 @@ class PickResult:
     note: str = ""
     email_found: bool = False
     problem: str = ""  # why a Pick isn't drafted
+    warnings: list[str] = field(default_factory=list)  # shown, never blocking
 
 
 @dataclass
@@ -194,7 +257,8 @@ def _process_pick(ctx: Ctx, li: Any, streak: FailStreak, finder: EmailFinder, dr
         return result
     streak.ok()
 
-    is_alumni = bool(cfg.alumni_school) and cfg.alumni_school.lower() in profile.education.lower()
+    # Alumni from the profile's education, or already known (e.g. found by the alumni search).
+    is_alumni = bool(p["is_alumni"]) or (bool(cfg.alumni_school) and cfg.alumni_school.lower() in profile.education.lower())
     details = _details(profile)
     db.update_fields(
         person_id,
@@ -205,6 +269,9 @@ def _process_pick(ctx: Ctx, li: Any, streak: FailStreak, finder: EmailFinder, dr
         context_2=details[1] if len(details) > 1 else None,
     )
     result.name = profile.name or p["name"]
+    if p["origin"] == "supplied" and company_mismatch(job["company"], profile):
+        result.warnings.append(f"profile doesn't show {job['company']} as the current company (kept)")
+        db.log(COMMAND, "info", person_id, f"pick {pick_id}: company mismatch warning")
 
     found = finder.find(li, profile)
     email = _plausible_email(found.email)

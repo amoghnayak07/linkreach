@@ -96,13 +96,15 @@ You've found a role you want. `linkreach job` takes its job description and the 
 ```bash
 linkreach job                  # paste the job description, then type END on its own line
 linkreach job --file jd.txt    # or read it from a file
+linkreach job --picks 3        # aim for 3 Picks this time (default: pick_target in config.yaml, 5)
 ```
 
 1. Claude reads the company, role, team, and location from the description. Press Enter to keep each value or type a correction. If the description doesn't name a company (for example a staffing-agency post), you're asked for it; linkreach never guesses.
-2. Paste profile links, one or more per line, then an empty line. Links are normalized (`linkedin.com/in/Jane-Doe?trk=…` becomes `https://www.linkedin.com/in/jane-doe/`), and anything that isn't a LinkedIn profile is skipped. Any number of links is fine.
-3. Confirm the list: Enter starts, `-2` removes link 2, pasting a link adds it, `q` quits without saving. No profile is opened before you confirm.
-4. linkreach reads each profile (same page-view caps, delays, and stop-on-CAPTCHA rules as every other command), then Claude writes the email subject, body, and connection note in one call. Code checks them (below) and retries up to 3 times with the reasons.
-5. The terminal prints every Pick's name, profile link, and connection note, then a summary: Picks, drafts, failures, emails found, page views used.
+2. Paste profile links, one or more per line, then an empty line. Links are normalized (`linkedin.com/in/Jane-Doe?trk=…` becomes `https://www.linkedin.com/in/jane-doe/`), and anything that isn't a LinkedIn profile is skipped. Any number of links is fine; they're never cut to fit the Pick target.
+3. If you gave fewer links than the Pick target, linkreach searches the company's current employees to fill the rest (Found picks). First confirm the company's LinkedIn page: it offers the page you used last time for that company, or a guess from the name. Press Enter to keep it, paste the right link, or type `-` to skip the search. The search costs one page view to read the company's id and size (cached for 90 days) plus at most 4 searches, all under the daily cap. People already in the database are skipped without opening their profiles. Claude sorts the rest into tiers: likely hiring manager for the role's team, then team leads and managers in the function, then recruiters, then the CTO and CEO, who are only considered at companies with 500 or fewer employees (unknown size counts as large). Code enforces the tier order, puts alumni of `alumni_school` first within a tier, and drops peers in the same role. If you gave enough links, no search runs.
+4. Confirm the list: your links first, then Found picks with their tier and a one-line reason. Enter starts, `-2` removes Pick 2, pasting a link adds it, `q` quits without saving. No profile is opened and nothing is saved before you confirm.
+5. linkreach reads each profile (same page-view caps, delays, and stop-on-CAPTCHA rules as every other command), then Claude writes the email subject, body, and connection note in one call. Code checks them (below) and retries up to 3 times with the reasons. If a link you pasted doesn't show the Job's company in its headline or top card, you get a warning, and the Pick is kept.
+6. The terminal prints every Pick's name, profile link, and connection note, then a summary: Picks, drafts, failures, emails found, page views used.
 
 The Job, each Person, and each Pick (with its subject, body, and note) are saved in the database. A Person already in the database is reused, so their history across Jobs stays together. Email lookup and Gmail drafts aren't built yet, so every drafted Pick currently ends `no_email`; a Pick whose draft fails validation 3 times keeps its status `picked` with the reasons stored.
 

@@ -47,6 +47,7 @@ def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     sub.add_parser("init", help="copy example config.yaml, style.md, companies.csv, jobs.csv here")
     j = sub.add_parser("job", help="paste a job description and profile links; get an email draft and connection note per Pick")
     j.add_argument("--file", type=Path, help="read the job description from this file instead of pasting it")
+    j.add_argument("--picks", type=int, metavar="N", help="Pick target for this run (default: pick_target in config.yaml)")
     sub.add_parser("set-key", help="store ANTHROPIC_API_KEY in the OS keychain (llm_backend: api only)")
     sub.add_parser("login", help="open the dedicated Chrome profile so you can sign in to LinkedIn by hand")
     c = sub.add_parser("collect", help="find people at each company")
@@ -118,7 +119,7 @@ def _dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
     if cmd == "job":
         from linkreach.commands import job
 
-        return job.run(ctx, file=args.file)
+        return job.run(ctx, file=args.file, picks=args.picks)
     if cmd == "collect":
         from linkreach.commands import collect
 

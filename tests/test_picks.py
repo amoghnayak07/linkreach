@@ -13,7 +13,7 @@ from linkreach.commands.common import EXIT_OK
 from linkreach.db import PICK_MANUAL_TRANSITIONS, PICK_STATUSES, TransitionError
 
 from tests.helpers import url
-from tests.test_job import answers, session_with, write_style
+from tests.test_job import answers, session_with, supplied_only, write_style  # noqa: F401  (autouse fixture)
 
 
 def make_pick(env, slug: str = "jane-doe", status: str = "no_email", company: str = "Microsoft", role: str = "PM", job_id: int | None = None) -> int:

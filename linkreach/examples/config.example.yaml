@@ -11,6 +11,11 @@ caps:
   daily_requests: 20     # connection requests per local day
   weekly_requests: 80    # connection requests per rolling 7 days
 
+# `linkreach job`: how many Picks a Job aims for. Profile links you paste always count and
+# are never cut; linkreach searches LinkedIn only to fill the slots left. Override per run
+# with `linkreach job --picks N`.
+pick_target: 5
+
 per_company_limit: 6     # max people collected per company, ever
 combine_keywords: true   # one search per bucket ("a" OR "b") instead of one per keyword
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -23,6 +24,9 @@ class FakePage:
 
     def visible(self) -> dict[str, str]:
         return self.elements
+
+    def on_goto(self, url: str) -> None:
+        """Called with the full URL (query included) each time the page is opened."""
 
     def click(self, sel: str, session: "FakeSession") -> bool:
         return sel in self.visible()
@@ -149,6 +153,7 @@ class FakeSession:
         if page is None:
             page = FakePage(url, body="Page not found")
         self.current = page
+        page.on_goto(url)
         if not host_allowed(page.url):
             raise DomainViolation(f"navigation to a non-LinkedIn domain: {page.url}")
 
@@ -219,10 +224,30 @@ def search_page(slug: str, people: list[tuple[str, str, str]]) -> FakePage:
     return FakePage(url, body="People", elements={S.PEOPLE_CARD[0]: "card"} if cards else {}, cards=cards)
 
 
-def company_page(slug: str, company_id: str) -> FakePage:
-    """New-UI People tab: ignores keywords, but links carry the numeric company id."""
+def company_page(slug: str, company_id: str, employees: str = "") -> FakePage:
+    """New-UI People tab: ignores keywords, but links carry the numeric company id.
+    `employees` is the size line as LinkedIn writes it, e.g. "51-200 employees"."""
     href = f"https://www.linkedin.com/search/results/people/?currentCompany=%5B%22{company_id}%22%5D&origin=X"
-    return FakePage(f"https://www.linkedin.com/company/{slug}/people/", body="People", attrs={S.COMPANY_ID_LINK[0]: {"href": href}})
+    body = "People" + (f" · Software Development · {employees}" if employees else "")
+    return FakePage(f"https://www.linkedin.com/company/{slug}/people/", body=body, attrs={S.COMPANY_ID_LINK[0]: {"href": href}})
+
+
+class KeywordSearchPage(FakePage):
+    """People search results that depend on the keywords in the URL.
+    `results(keywords)` returns (name, title, profile_url) tuples."""
+
+    def __init__(self, results: Callable[[str], list[tuple[str, str, str]]]):
+        super().__init__("https://www.linkedin.com/search/results/people/", body="Results")
+        self.results = results
+        self.queries: list[str] = []
+
+    def on_goto(self, url: str) -> None:
+        from urllib.parse import parse_qs, urlsplit
+
+        keywords = parse_qs(urlsplit(url).query).get("keywords", [""])[0]
+        self.queries.append(keywords)
+        self.card_list = [{"name": n, "title": t, "url": u} for n, t, u in self.results(keywords)]
+        self.elements = {S.PEOPLE_CARD[0]: "card"} if self.card_list else {}
 
 
 def people_search_page(company_id: str, people: list[tuple[str, str, str]]) -> FakePage:
@@ -292,14 +317,50 @@ def request_kind(kw: dict) -> str:
         return "extract"
     if "connection_note" in props:
         return "email"
+    if "ranked" in props:
+        return "rank"
     return "legacy"
+
+
+_CARD_RE = re.compile(r"^\[(\d+)\] title: (.*) \| alumni: (yes|no)$")
+
+
+def rank_cards(kw: dict) -> list[tuple[int, str, bool]]:
+    """(id, title, alumni) for each candidate card in a ranking request."""
+    out = []
+    for line in kw["messages"][0]["content"].splitlines():
+        m = _CARD_RE.match(line.strip())
+        if m:
+            out.append((int(m.group(1)), m.group(2), m.group(3) == "yes"))
+    return out
+
+
+def rank_by_keywords(kw: dict) -> dict:
+    """A plausible ranker: tiers from title words, in card order."""
+    ranked = []
+    for i, title, _alumni in rank_cards(kw):
+        t = title.lower()
+        if "cto" in t.split() or "ceo" in t.split():
+            tier = "executive"
+        elif "recruit" in t or "talent" in t:
+            tier = "recruiter"
+        elif "azure core" in t and ("manager" in t or "director" in t):
+            tier = "hiring_manager"
+        elif any(w in t for w in ("manager", "lead", "director", "head")):
+            tier = "lead_manager"
+        else:
+            tier = "exclude"
+        ranked.append({"id": i, "tier": tier, "reason": f"{tier.replace('_', ' ')} for this role"})
+    return {"ranked": ranked}
 
 
 def job_responder(
     fields: dict | Callable[[dict], dict] | None = None,
     email: dict | Callable[[dict], dict] | None = None,
+    rank: dict | Callable[[dict], dict] | None = None,
 ) -> Callable[[dict], dict]:
-    """Answers Job extraction with `fields` and drafting with `email` (dicts or callables)."""
+    """Answers Job extraction with `fields`, drafting with `email`, and ranking with `rank`
+    (dicts or callables)."""
 
     def answer(kw: dict) -> dict:
         kind = request_kind(kw)
@@ -309,6 +370,9 @@ def job_responder(
         if kind == "email":
             e = email if email is not None else GOOD_EMAIL
             return e(kw) if callable(e) else dict(e)
+        if kind == "rank":
+            r = rank if rank is not None else rank_by_keywords
+            return r(kw) if callable(r) else dict(r)
         return dict(GOOD_PARTS)
 
     return answer

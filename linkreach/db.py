@@ -185,6 +185,14 @@ CREATE INDEX IF NOT EXISTS idx_activity_event ON activity_log(event, timestamp);
 CREATE TABLE IF NOT EXISTS company_ids (
     slug TEXT PRIMARY KEY COLLATE NOCASE,
     company_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    employees INTEGER            -- read from the same page; NULL when it couldn't be read
+);
+
+-- The LinkedIn company page a Job's company name was confirmed to, so `job` can offer it next time.
+CREATE TABLE IF NOT EXISTS company_pages (
+    company TEXT PRIMARY KEY COLLATE NOCASE,
+    slug TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 """
@@ -200,6 +208,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "pick_id" not in cols:
         conn.execute("ALTER TABLE status_history ADD COLUMN pick_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_history_pick ON status_history(pick_id)")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(company_ids)")}
+    if "employees" not in cols:
+        conn.execute("ALTER TABLE company_ids ADD COLUMN employees INTEGER")
 
 
 def normalize_profile_url(url: str) -> str:
@@ -255,13 +266,33 @@ class DB:
             return None
         return row["company_id"]
 
-    def set_company_id(self, slug: str, company_id: str) -> None:
+    def get_company_size(self, slug: str) -> int | None:
+        """Employee count stored with the cached company id, or None if unknown or stale."""
+        row = self.conn.execute("SELECT employees, updated_at FROM company_ids WHERE slug = ?", (slug,)).fetchone()
+        if row is None or row["updated_at"] < clock.days_ago_iso(self.COMPANY_ID_MAX_AGE_DAYS):
+            return None
+        return None if row["employees"] is None else int(row["employees"])
+
+    def set_company_id(self, slug: str, company_id: str, employees: int | None = None) -> None:
         if not (company_id or "").isdigit():
             raise ValueError("company id must be numeric")
         self.conn.execute(
-            "INSERT INTO company_ids (slug, company_id, updated_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(slug) DO UPDATE SET company_id = excluded.company_id, updated_at = excluded.updated_at",
-            (slug, company_id, clock.now_iso()),
+            "INSERT INTO company_ids (slug, company_id, updated_at, employees) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(slug) DO UPDATE SET company_id = excluded.company_id, updated_at = excluded.updated_at, "
+            "employees = excluded.employees",
+            (slug, company_id, clock.now_iso(), employees),
+        )
+        self.conn.commit()
+
+    def get_company_slug(self, company: str) -> str | None:
+        row = self.conn.execute("SELECT slug FROM company_pages WHERE company = ?", (company,)).fetchone()
+        return None if row is None else str(row["slug"])
+
+    def set_company_slug(self, company: str, slug: str) -> None:
+        self.conn.execute(
+            "INSERT INTO company_pages (company, slug, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(company) DO UPDATE SET slug = excluded.slug, updated_at = excluded.updated_at",
+            (company, slug, clock.now_iso()),
         )
         self.conn.commit()
 
@@ -405,14 +436,14 @@ class DB:
         return self.conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
 
     # ---------- picks ----------
-    def ensure_person(self, profile_url: str, name: str, company: str) -> int:
+    def ensure_person(self, profile_url: str, name: str, company: str, title: str | None = None, is_alumni: bool = False) -> int:
         """Id of the Person with this profile, creating them if new. A known Person is reused
         as is, so their history across Jobs stays in one place."""
         url = normalize_profile_url(profile_url)
         row = self.conn.execute("SELECT id FROM people WHERE profile_url = ?", (url,)).fetchone()
         if row is not None:
             return int(row["id"])
-        pid = self.add_person(name=name, company=company, profile_url=url)
+        pid = self.add_person(name=name, company=company, profile_url=url, title=title or None, is_alumni=1 if is_alumni else 0)
         assert pid is not None
         return pid
 
