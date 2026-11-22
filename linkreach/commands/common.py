@@ -46,6 +46,7 @@ class Ctx:
     open_chrome: Callable[[Path, str], int] = open_plain_chrome  # login's plain-Chrome window
     claude_client: object | None = None  # client for `job`'s Claude calls; None = llm.make_client(cfg)
     email_finder: object | None = None  # emailfinder.EmailFinder; None = NoFinder
+    gmail: object | None = None  # gmail.GmailDrafts; None = the real Gmail API with the keychain sign-in
 
     @property
     def cfg(self) -> Config:

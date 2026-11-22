@@ -12,7 +12,7 @@ from linkreach.jobsearch import SEARCH_BUDGET, is_peer
 from linkreach.linkedin import parse_company_size
 
 from tests.conftest import base_session
-from tests.fakes import FakeClaude, KeywordSearchPage, captcha_page, company_page, job_responder, rank_by_keywords, rank_cards
+from tests.fakes import FakeClaude, FakeGmail, KeywordSearchPage, captcha_page, company_page, job_responder, rank_by_keywords, rank_cards
 from tests.helpers import profile_for, url
 from tests.test_job import JD, KEEP_FIELDS, write_style
 
@@ -455,6 +455,7 @@ def test_picks_option_through_the_cli(env):
         "sleep": lambda x: None,
         "input_fn": _queue(JD + KEEP_FIELDS + [url("jane-doe"), "", ""]),
         "claude_client": FakeClaude(job_responder()),
+        "gmail": FakeGmail(),
     }
     assert cli.main(["job", "--picks", "1"], ctx_overrides=overrides) == EXIT_OK
     assert page.queries == []

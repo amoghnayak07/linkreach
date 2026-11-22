@@ -16,7 +16,7 @@ from linkreach.db import DB, PICK_AUTO_ONLY, PICK_STATUSES
 MARK_PICK_CHOICES = [s for s in PICK_STATUSES if s not in PICK_AUTO_ONLY]
 
 # Commands that don't use companies.csv / jobs.csv, so they run without them.
-NO_CSV_COMMANDS = {"job", "mark", "list"}
+NO_CSV_COMMANDS = {"job", "redraft", "mark", "list"}
 
 
 def peek_connect_mode(argv: list[str] | None) -> str:
@@ -48,7 +48,11 @@ def build_parser(connect_mode: str = "manual") -> argparse.ArgumentParser:
     j = sub.add_parser("job", help="paste a job description and profile links; get an email draft and connection note per Pick")
     j.add_argument("--file", type=Path, help="read the job description from this file instead of pasting it")
     j.add_argument("--picks", type=int, metavar="N", help="Pick target for this run (default: pick_target in config.yaml)")
+    r = sub.add_parser("redraft", help="add a line of context to Picks that need detail and redraft them; retry failed Gmail drafts")
+    r.add_argument("--job", type=int, help="only this Job id")
     sub.add_parser("set-key", help="store ANTHROPIC_API_KEY in the OS keychain (llm_backend: api only)")
+    g = sub.add_parser("gmail-login", help="sign in to Gmail (create-drafts scope only) with your own OAuth desktop client")
+    g.add_argument("--client-file", type=Path, required=True, help="the OAuth client .json you downloaded from Google Cloud")
     sub.add_parser("login", help="open the dedicated Chrome profile so you can sign in to LinkedIn by hand")
     c = sub.add_parser("collect", help="find people at each company")
     c.add_argument("--dry-run", action="store_true", help="print planned searches; open nothing")
@@ -94,6 +98,10 @@ def main(argv: list[str] | None = None, ctx_overrides: dict | None = None) -> in
         from linkreach.commands import misc
 
         return misc.set_key()
+    if args.command == "gmail-login":
+        from linkreach.commands import misc
+
+        return misc.gmail_login(args.client_file)
 
     try:
         inputs = load_inputs(require_csvs=args.command not in NO_CSV_COMMANDS)
@@ -120,6 +128,10 @@ def _dispatch(args: argparse.Namespace, ctx: Ctx) -> int:
         from linkreach.commands import job
 
         return job.run(ctx, file=args.file, picks=args.picks)
+    if cmd == "redraft":
+        from linkreach.commands import redraft
+
+        return redraft.run(ctx, job_id=args.job)
     if cmd == "collect":
         from linkreach.commands import collect
 

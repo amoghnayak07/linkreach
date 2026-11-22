@@ -8,13 +8,13 @@ from typing import Any
 import pytest
 import yaml
 
-from linkreach import clock, credentials, logsetup
+from linkreach import clock, credentials, gmail, logsetup
 from linkreach.commands.common import Ctx
 from linkreach.config import Inputs, load_inputs
 from linkreach.db import DB
 from linkreach.drafting import Drafter
 
-from tests.fakes import FakeClaude, FakeSession, feed_page, job_responder
+from tests.fakes import FakeClaude, FakeGmail, FakeSession, feed_page, job_responder
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "linkreach" / "examples"
 FAKE_KEY = "sk-ant-api03-TESTKEYabcdefghijklmnopqrstuvwxyz0123456789"
@@ -47,6 +47,7 @@ class Env:
         ctx.api_check = kw.pop("api_check", lambda model: (True, "fake key ok"))
         ctx.drafter = kw.pop("drafter", Drafter(self.inputs.config, client=FakeClaude()))
         ctx.claude_client = kw.pop("claude_client", FakeClaude(job_responder()))  # never the real API in tests
+        ctx.gmail = kw.pop("gmail", FakeGmail())  # never real Gmail; gmail=None means "no sign-in stored"
         ctx.factory_calls = calls  # type: ignore[attr-defined]
         for k, v in kw.items():
             setattr(ctx, k, v)
@@ -98,6 +99,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Env:
     monkeypatch.setenv("LINKREACH_INPUTS", str(inputs_dir))
     monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_KEY)
     monkeypatch.setattr(credentials, "_from_keyring", lambda: None)
+    monkeypatch.setattr(gmail, "load_auth", lambda: None)  # never the real keychain's Gmail sign-in
     credentials.reset_cache()
     logsetup.reset()
     logsetup.setup()

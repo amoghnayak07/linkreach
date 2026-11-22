@@ -4,7 +4,9 @@
 confirmed Picks; `linkreach job` is a thin terminal wrapper around it, and a future
 dashboard form can call it the same way. Per Pick: read the profile (within the page-view
 caps and stop rules), ask the Email finder while the profile is open, draft, validate,
-save. Each Pick is committed as soon as it's done, so a stopped run keeps its progress.
+then `finish_pick` (save, Gmail draft, status). `redraft_pick` reuses that last step for
+`needs_detail` Picks. Each Pick is committed as soon as it's done, so a stopped run keeps
+its progress.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ from linkreach import clock, logsetup, paths, sanitize, validate
 from linkreach.commands.common import Ctx, FailStreak, linkedin_session
 from linkreach.db import DB, normalize_profile_url
 from linkreach.emailfinder import EmailFinder, NoFinder
-from linkreach.jobdraft import JobDrafter, JobFields, PickFacts
+from linkreach.gmail import GmailDrafts, GmailError
+from linkreach.jobdraft import EmailDraft, JobDrafter, JobFields, PickFacts
 from linkreach.jobsearch import FoundPick, SearchOutcome, find_picks
 from linkreach.linkedin import Profile
 from linkreach.safety import cap_status
@@ -172,11 +175,17 @@ class PickResult:
     pick_id: int
     name: str
     profile_url: str
-    status: str  # drafted | no_email | picked (not finished)
+    status: str  # drafted | no_email | needs_detail | picked (not finished)
     note: str = ""
     email_found: bool = False
-    problem: str = ""  # why a Pick isn't drafted
+    gmail_draft_id: str | None = None
+    problem: str = ""  # why a Pick isn't drafted, or why its Gmail draft wasn't created
     warnings: list[str] = field(default_factory=list)  # shown, never blocking
+
+    @property
+    def gmail_pending(self) -> bool:
+        """Validated and saved, but the Gmail draft failed: `linkreach redraft` retries it."""
+        return bool(self.note) and self.status in RETRYABLE_STATUSES
 
 
 @dataclass
@@ -191,12 +200,108 @@ class JobReport:
         return sum(1 for r in self.results if r.status in ("drafted", "no_email"))
 
     @property
+    def needs_detail(self) -> int:
+        return sum(1 for r in self.results if r.status == "needs_detail" and not r.gmail_pending)
+
+    @property
     def failures(self) -> int:
-        return sum(1 for r in self.results if r.status not in ("drafted", "no_email"))
+        return len(self.results) - self.drafts - self.needs_detail
+
+    @property
+    def gmail_drafts(self) -> int:
+        return sum(1 for r in self.results if r.gmail_draft_id)
 
     @property
     def emails_found(self) -> int:
         return sum(1 for r in self.results if r.email_found)
+
+
+# ---------------------------------------------------------------- finishing a Pick
+
+# Statuses a Pick can be in while its validated draft waits for a Gmail draft.
+RETRYABLE_STATUSES = ("picked", "needs_detail")
+
+
+def gmail_pending(row: Any) -> bool:
+    """A Pick whose draft passed validation and has an email, but whose Gmail draft wasn't
+    created (Gmail failed). Its subject, body, and note are saved; only Gmail is retried."""
+    return (
+        row["status"] in RETRYABLE_STATUSES
+        and bool(row["email"])
+        and bool(row["email_body"])
+        and bool(row["connection_note"])
+        and not row["gmail_draft_id"]
+    )
+
+
+@dataclass
+class Finished:
+    status: str  # drafted | no_email, or the unchanged status when Gmail failed
+    gmail_draft_id: str | None = None
+    gmail_error: str = ""  # short, content-free reason
+
+
+def _gmail_reason(exc: Exception) -> str:
+    # GmailError messages never hold draft content or tokens; anything else shows its type only.
+    return str(exc)[:200] if isinstance(exc, GmailError) else type(exc).__name__
+
+
+def finish_pick(ctx: Ctx, pick: Any, draft: EmailDraft, email: str | None, gmail: GmailDrafts) -> Finished:
+    """The one path from a validated draft to a finished Pick, shared by `job` and
+    `redraft`: save the subject, body, and note; with an email, create the Gmail draft and
+    move to `drafted`; without one, move to `no_email` (no Gmail draft). If Gmail fails,
+    the draft stays saved, the status doesn't move, and the failure is logged without
+    content, so the Pick can be retried."""
+    db = ctx.db
+    pick_id, person_id = int(pick["id"]), int(pick["person_id"])
+    fields: dict[str, Any] = {
+        "email": email,
+        "email_subject": draft.subject,
+        "email_body": draft.body,
+        "connection_note": draft.note,
+        "validation_errors": "\n".join(draft.errors) or None,  # only "dropped from prompt" notes remain
+    }
+    if not email:
+        db.set_pick_status(pick_id, "no_email", **fields)
+        return Finished("no_email")
+    try:
+        draft_id = gmail.create_draft(email, draft.subject, draft.body)
+    except Exception as exc:  # one Pick's Gmail failure never stops the run
+        db.update_pick(pick_id, **fields)
+        reason = _gmail_reason(exc)
+        db.log(COMMAND, "info", person_id, f"pick {pick_id}: gmail draft failed ({type(exc).__name__})")
+        logsetup.event(log, "gmail draft failed", pick_id=pick_id, error=type(exc).__name__)
+        current = db.get_pick(pick_id)
+        return Finished(current["status"] if current else str(pick["status"]), gmail_error=reason)
+    db.set_pick_status(pick_id, "drafted", gmail_draft_id=draft_id, **fields)
+    db.log(COMMAND, "info", person_id, f"pick {pick_id}: gmail draft created")
+    logsetup.event(log, "gmail draft created", pick_id=pick_id)
+    return Finished("drafted", gmail_draft_id=draft_id)
+
+
+def _apply_finish(result: PickResult, fin: Finished, note: str) -> None:
+    result.status = fin.status
+    result.note = note
+    result.gmail_draft_id = fin.gmail_draft_id
+    if fin.gmail_error:
+        result.problem = f"Gmail draft not created ({fin.gmail_error}); run `linkreach redraft` to retry"
+
+
+def retry_gmail(ctx: Ctx, pick_id: int, gmail: GmailDrafts) -> PickResult:
+    """Create the Gmail draft for a Pick whose saved draft is waiting on Gmail."""
+    row = ctx.db.get_pick(pick_id)
+    if row is None or not gmail_pending(row):
+        raise ValueError(f"pick {pick_id} has no draft waiting for Gmail")
+    result = PickResult(pick_id=pick_id, name=row["name"], profile_url=row["profile_url"], status=row["status"], email_found=True)
+    draft = EmailDraft(status="ok", subject=row["email_subject"] or "", body=row["email_body"], note=row["connection_note"])
+    if row["validation_errors"]:
+        draft.errors = [e for e in str(row["validation_errors"]).splitlines() if e.startswith("dropped")]
+    _apply_finish(result, finish_pick(ctx, row, draft, row["email"], gmail), draft.note)
+    return result
+
+
+def _draft_problem(draft: EmailDraft) -> str:
+    return "; ".join(e for e in draft.errors if not e.startswith("dropped")) or "draft failed"
 
 
 def _details(profile: Profile) -> list[str]:
@@ -214,12 +319,13 @@ def process_job(
     report: JobReport,
     client: Any,
     style: str,
+    gmail: GmailDrafts,
     finder: EmailFinder | None = None,
     on_pick: Callable[[PickResult], None] | None = None,
 ) -> JobReport:
-    """Read, look up, draft, and save every `picked` Pick of a Job. Safety stops
-    (CAPTCHA, caps, selector breaks) propagate to the caller; `report` keeps what was
-    done before the stop."""
+    """Read, look up, draft, and save every `picked` Pick of a Job, creating a Gmail draft
+    for each one with an email. Safety stops (CAPTCHA, caps, selector breaks) propagate to
+    the caller; `report` keeps what was done before the stop."""
     db, cfg = ctx.db, ctx.cfg
     finder = finder or NoFinder()
     drafter = JobDrafter(cfg, client, style)
@@ -235,7 +341,7 @@ def process_job(
         with linkedin_session(ctx, COMMAND, f"start job={job_id} picks={len(picks)}") as li:
             streak = FailStreak(li, COMMAND)
             for p in picks:
-                result = _process_pick(ctx, li, streak, finder, drafter, job, p)
+                result = _process_pick(ctx, li, streak, finder, drafter, gmail, job, p)
                 report.results.append(result)
                 if on_pick:
                     on_pick(result)
@@ -244,7 +350,9 @@ def process_job(
     return report
 
 
-def _process_pick(ctx: Ctx, li: Any, streak: FailStreak, finder: EmailFinder, drafter: JobDrafter, job: Any, p: Any) -> PickResult:
+def _process_pick(
+    ctx: Ctx, li: Any, streak: FailStreak, finder: EmailFinder, drafter: JobDrafter, gmail: GmailDrafts, job: Any, p: Any
+) -> PickResult:
     db, cfg = ctx.db, ctx.cfg
     pick_id, person_id = int(p["id"]), int(p["person_id"])
     result = PickResult(pick_id=pick_id, name=p["name"], profile_url=p["profile_url"], status="picked")
@@ -291,27 +399,89 @@ def _process_pick(ctx: Ctx, li: Any, streak: FailStreak, finder: EmailFinder, dr
         draft = None
         result.problem = f"Claude call failed ({type(exc).__name__})"
         logsetup.event(log, "draft failed", pick_id=pick_id, error=type(exc).__name__)
+    if draft is not None and draft.status == "failed":
+        # Failed validation every attempt (or was refused): the user adds detail and redrafts.
+        # The email is kept so the redraft needs no new Reveal; no Gmail draft is made.
+        result.problem = _draft_problem(draft)
+        db.set_pick_status(pick_id, "needs_detail", email=email, validation_errors=result.problem[:2000])
+        db.log(COMMAND, "info", person_id, f"pick {pick_id}: needs_detail")
+        logsetup.event(log, "pick needs detail", pick_id=pick_id, attempts=draft.attempts)
+        result.status = "needs_detail"
+        return result
     if draft is None or draft.status != "ok":
         if draft is not None:
-            result.problem = "; ".join(e for e in draft.errors if not e.startswith("dropped")) or "draft failed"
-        db.update_pick(pick_id, validation_errors=result.problem[:2000])
+            result.problem = _draft_problem(draft)
+        db.update_pick(pick_id, email=email, validation_errors=result.problem[:2000])
         db.log(COMMAND, "info", person_id, f"pick {pick_id}: draft failed")
         return result
 
-    status = "drafted" if email else "no_email"
-    db.set_pick_status(
-        pick_id,
-        status,
-        email=email,
-        email_subject=draft.subject,
-        email_body=draft.body,
-        connection_note=draft.note,
-        validation_errors="\n".join(draft.errors) or None,
-    )
-    db.log(COMMAND, "info", person_id, f"pick {pick_id}: {status} via {found.source}")
-    logsetup.event(log, "pick saved", pick_id=pick_id, status=status, attempts=draft.attempts, finder=found.source)
-    result.status = status
-    result.note = draft.note
+    fin = finish_pick(ctx, p, draft, email, gmail)
+    db.log(COMMAND, "info", person_id, f"pick {pick_id}: {fin.status} via {found.source}")
+    logsetup.event(log, "pick saved", pick_id=pick_id, status=fin.status, attempts=draft.attempts, finder=found.source)
+    _apply_finish(result, fin, draft.note)
     if not email:
         result.problem = found.reason
+    return result
+
+
+# ---------------------------------------------------------------- needs_detail redraft
+
+USER_DETAIL_CAP = 300
+
+
+class BadDetail(ValueError):
+    pass
+
+
+def clean_user_detail(text: str) -> str:
+    """The user's one line of context, sanitized like profile data. Text that looks like an
+    instruction, or carries a URL or email address, is refused (it could only make the
+    draft fail validation, or steer the model)."""
+    detail = sanitize.clean_line(text, USER_DETAIL_CAP)
+    reasons = validate.suspicious_context(detail)
+    if reasons:
+        raise BadDetail("leave out " + ", ".join({"instruction pattern": "instruction-like words", "url": "links", "email": "email addresses"}[r] for r in reasons))
+    return detail
+
+
+def facts_from_row(job: Any, row: Any, user_detail: str) -> PickFacts:
+    """What the drafting prompt knows about a Pick from the database alone: no page view."""
+    return PickFacts(
+        name=row["name"],
+        title=row["title"] or "",
+        company=job["company"],
+        is_alumni=bool(row["is_alumni"]),
+        details=[d for d in (row["context_1"], row["context_2"]) if d],
+        user_detail=user_detail,
+    )
+
+
+def redraft_pick(ctx: Ctx, pick_id: int, user_detail: str, client: Any, style: str, gmail: GmailDrafts) -> PickResult:
+    """Redraft a `needs_detail` Pick with one line of the user's context, from what's saved
+    (no browser, no Reveal). A draft that passes goes through `finish_pick`, like in `job`;
+    one that fails again stays `needs_detail` with the new errors. `user_detail` must
+    already be cleaned by `clean_user_detail`."""
+    db = ctx.db
+    row = db.get_pick(pick_id)
+    if row is None or row["status"] != "needs_detail":
+        raise ValueError(f"pick {pick_id} isn't needs_detail")
+    job = db.get_job(int(row["job_id"]))
+    assert job is not None
+    db.update_pick(pick_id, user_detail=user_detail)
+    result = PickResult(pick_id=pick_id, name=row["name"], profile_url=row["profile_url"], status="needs_detail",
+                        email_found=bool(row["email"]))
+    try:
+        draft = JobDrafter(ctx.cfg, client, style).draft(job, facts_from_row(job, row, user_detail))
+    except Exception as exc:
+        draft = None
+        result.problem = f"Claude call failed ({type(exc).__name__})"
+        logsetup.event(log, "redraft failed", pick_id=pick_id, error=type(exc).__name__)
+    if draft is None or draft.status != "ok":
+        if draft is not None:
+            result.problem = _draft_problem(draft)
+        db.update_pick(pick_id, validation_errors=result.problem[:2000])
+        db.log(COMMAND, "info", int(row["person_id"]), f"pick {pick_id}: redraft failed")
+        return result
+    _apply_finish(result, finish_pick(ctx, row, draft, row["email"], gmail), draft.note)
+    db.log(COMMAND, "info", int(row["person_id"]), f"pick {pick_id}: redrafted, {result.status}")
     return result

@@ -13,7 +13,7 @@ from typing import Any
 
 from rich.markup import escape
 
-from linkreach import jobflow, jobsearch, llm, logsetup, sanitize
+from linkreach import gmail, jobflow, jobsearch, llm, logsetup, sanitize
 from linkreach.claude_code import ClaudeCodeError
 from linkreach.commands.common import EXIT_CONFIG, EXIT_OK, Ctx, console, handle_run_errors
 from linkreach.config import MAX_PICK_TARGET
@@ -232,21 +232,48 @@ def _client(ctx: Ctx) -> Any:
     return ctx.claude_client if ctx.claude_client is not None else llm.make_client(ctx.cfg)
 
 
+def gmail_client(ctx: Ctx, command: str) -> Any | None:
+    """The Gmail drafts client, or None (after saying why) when no Gmail sign-in is stored."""
+    if ctx.gmail is not None:
+        return ctx.gmail
+    try:
+        return gmail.make_client()
+    except gmail.GmailNotSignedIn:
+        console.print(
+            f"[bold red]linkreach {command} needs Gmail:[/] no Gmail sign-in is stored. Run "
+            "[bold]linkreach gmail-login --client-file <your OAuth client .json>[/] first (see the README, \"Gmail drafts\")."
+        )
+        return None
+
+
+def setup(ctx: Ctx, command: str) -> tuple[str, Any, Any] | None:
+    """Style file, Claude client, and Gmail client, or None (after saying why) if one is
+    missing. Nothing is read, opened, or saved before these all pass."""
+    try:
+        style = jobflow.load_style()
+    except jobflow.StyleMissing as exc:
+        console.print(f"[bold red]linkreach {command} needs your Style file:[/] {escape(str(exc))}")
+        return None
+    mail = gmail_client(ctx, command)
+    if mail is None:
+        return None
+    try:
+        client = _client(ctx)
+    except RuntimeError as exc:
+        console.print(f"[red]{escape(str(exc))}[/]")
+        return None
+    return style, client, mail
+
+
 def run(ctx: Ctx, file: Path | None = None, picks: int | None = None) -> int:
     target = ctx.cfg.pick_target if picks is None else picks
     if not 0 <= target <= MAX_PICK_TARGET:
         console.print(f"[red]--picks must be between 0 and {MAX_PICK_TARGET}.[/]")
         return EXIT_CONFIG
-    try:
-        style = jobflow.load_style()
-    except jobflow.StyleMissing as exc:
-        console.print(f"[bold red]linkreach job needs your Style file:[/] {escape(str(exc))}")
+    ready = setup(ctx, "job")
+    if ready is None:
         return EXIT_CONFIG
-    try:
-        client = _client(ctx)
-    except RuntimeError as exc:
-        console.print(f"[red]{escape(str(exc))}[/]")
-        return EXIT_CONFIG
+    style, client, mail = ready
 
     raw = read_description(ctx, file)
     if raw is None:
@@ -295,14 +322,8 @@ def run(ctx: Ctx, file: Path | None = None, picks: int | None = None) -> int:
 
     report = jobflow.JobReport(job_id=job_id)
 
-    def show(r: jobflow.PickResult) -> None:
-        tag = {"drafted": "[green]drafted[/]", "no_email": "[green]drafted[/] (no email)"}.get(r.status, "[red]not drafted[/]")
-        console.print(f"{tag} {escape(r.name)}")
-        for w in r.warnings:
-            console.print(f"  [yellow]warning:[/] {escape(w)}", soft_wrap=True)
-
     def work() -> int:
-        jobflow.process_job(ctx, job_id, report, client, style, ctx.email_finder, on_pick=show)  # type: ignore[arg-type]
+        jobflow.process_job(ctx, job_id, report, client, style, mail, ctx.email_finder, on_pick=show_result)  # type: ignore[arg-type]
         return EXIT_OK
 
     code = handle_run_errors(ctx, jobflow.COMMAND, work)
@@ -310,25 +331,57 @@ def run(ctx: Ctx, file: Path | None = None, picks: int | None = None) -> int:
     return code
 
 
+def result_tag(r: jobflow.PickResult) -> str:
+    if r.gmail_pending:
+        return "[yellow]drafted, Gmail failed[/]"
+    if r.status == "drafted":
+        return "[green]drafted[/] (Gmail draft saved)"
+    if r.status == "no_email":
+        return "[green]drafted[/] (no email, so no Gmail draft)"
+    if r.status == "needs_detail":
+        return "[yellow]needs detail[/]"
+    return "[red]not drafted[/]"
+
+
+def show_result(r: jobflow.PickResult) -> None:
+    console.print(f"{result_tag(r)} {escape(r.name)}")
+    for w in r.warnings:
+        console.print(f"  [yellow]warning:[/] {escape(w)}", soft_wrap=True)
+
+
+def print_note(r: jobflow.PickResult) -> None:
+    """One Pick's block in the Connection notes list."""
+    console.print(f"\n[bold]{escape(r.name)}[/]", soft_wrap=True)
+    console.print(escape(r.profile_url), soft_wrap=True)
+    for w in r.warnings:
+        console.print(f"[yellow]warning:[/] {escape(w)}", soft_wrap=True)
+    if r.note:
+        console.print(escape(r.note), soft_wrap=True)
+        if r.gmail_pending:
+            console.print(f"[yellow]{escape(r.problem)}[/]", soft_wrap=True)
+    elif r.status == "needs_detail":
+        console.print(f"[yellow]needs detail:[/] {escape(r.problem or 'draft failed')}", soft_wrap=True)
+    else:
+        console.print(f"[red]no draft:[/] {escape(r.problem or 'not finished')}", soft_wrap=True)
+
+
 def print_report(report: jobflow.JobReport) -> None:
     console.print()
     console.print("[bold]Connection notes[/] (copy each into LinkedIn yourself):")
     for r in report.results:
-        console.print(f"\n[bold]{escape(r.name)}[/]", soft_wrap=True)
-        console.print(escape(r.profile_url), soft_wrap=True)
-        for w in r.warnings:
-            console.print(f"[yellow]warning:[/] {escape(w)}", soft_wrap=True)
-        if r.note:
-            console.print(escape(r.note), soft_wrap=True)
-        else:
-            console.print(f"[red]no draft:[/] {escape(r.problem or 'not finished')}", soft_wrap=True)
+        print_note(r)
     if not report.results:
         console.print("  (none)")
     not_reached = report.picks_total - len(report.results)
     console.print()
     console.print(
-        f"[bold]Summary:[/] Picks {report.picks_total}, drafts {report.drafts}, failures {report.failures}"
+        f"[bold]Summary:[/] Picks {report.picks_total}, drafts {report.drafts}, Gmail drafts {report.gmail_drafts}, "
+        f"needs detail {report.needs_detail}, failures {report.failures}"
         + (f", not reached {not_reached}" if not_reached > 0 else "")
         + f", emails found {report.emails_found}, page views used {report.views_used}",
         soft_wrap=True,
     )
+    if report.needs_detail:
+        console.print("Add a line of context to the Picks that need detail with [bold]linkreach redraft[/].")
+    if any(r.gmail_pending for r in report.results):
+        console.print("Retry the Gmail drafts that failed with [bold]linkreach redraft[/].")

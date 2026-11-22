@@ -37,6 +37,7 @@ Then, in the folder where you want to keep your input files:
 ```bash
 linkreach init        # copies config.yaml, style.md, companies.csv, jobs.csv here (never overwrites)
 linkreach set-key     # llm_backend: api only. Stores ANTHROPIC_API_KEY in the OS keychain (hidden input)
+linkreach gmail-login --client-file client.json   # lets `job` save drafts to Gmail; see "Gmail drafts" below
 ```
 
 Edit `config.yaml`: set `resume_url`, check your background block, and set `doctor_profile_url` to a public profile with an About section. Edit `companies.csv` (companies with 1,000+ employees only). `jobs.csv` is optional.
@@ -104,9 +105,35 @@ linkreach job --picks 3        # aim for 3 Picks this time (default: pick_target
 3. If you gave fewer links than the Pick target, linkreach searches the company's current employees to fill the rest (Found picks). First confirm the company's LinkedIn page: it offers the page you used last time for that company, or a guess from the name. Press Enter to keep it, paste the right link, or type `-` to skip the search. The search costs one page view to read the company's id and size (cached for 90 days) plus at most 4 searches, all under the daily cap. People already in the database are skipped without opening their profiles. Claude sorts the rest into tiers: likely hiring manager for the role's team, then team leads and managers in the function, then recruiters, then the CTO and CEO, who are only considered at companies with 500 or fewer employees (unknown size counts as large). Code enforces the tier order, puts alumni of `alumni_school` first within a tier, and drops peers in the same role. If you gave enough links, no search runs.
 4. Confirm the list: your links first, then Found picks with their tier and a one-line reason. Enter starts, `-2` removes Pick 2, pasting a link adds it, `q` quits without saving. No profile is opened and nothing is saved before you confirm.
 5. linkreach reads each profile (same page-view caps, delays, and stop-on-CAPTCHA rules as every other command), then Claude writes the email subject, body, and connection note in one call. Code checks them (below) and retries up to 3 times with the reasons. If a link you pasted doesn't show the Job's company in its headline or top card, you get a warning, and the Pick is kept.
-6. The terminal prints every Pick's name, profile link, and connection note, then a summary: Picks, drafts, failures, emails found, page views used.
+6. A Pick with an email gets its email draft saved to your Gmail Drafts folder and moves to `drafted`. A Pick without an email gets no Gmail draft and ends `no_email`. A Pick whose draft fails validation 3 times ends `needs_detail`, with no Gmail draft.
+7. The terminal prints every Pick's name, profile link, and connection note (or why there isn't one), then a summary: Picks, drafts, Gmail drafts, needs detail, failures, emails found, page views used.
 
-The Job, each Person, and each Pick (with its subject, body, and note) are saved in the database. A Person already in the database is reused, so their history across Jobs stays together. Email lookup and Gmail drafts aren't built yet, so every drafted Pick currently ends `no_email`; a Pick whose draft fails validation 3 times keeps its status `picked` with the reasons stored.
+`job` refuses to start without your Style file or a Gmail sign-in (see [Gmail drafts](#gmail-drafts)). The Job, each Person, and each Pick (with its email, subject, body, note, and Gmail draft id) are saved in the database. A Person already in the database is reused, so their history across Jobs stays together. Email lookup isn't built yet (tickets 08 and 09), so for now every drafted Pick ends `no_email`.
+
+**Rescuing a Pick: `linkreach redraft`.** A Pick that ends `needs_detail` is listed in the summary with the reasons. Run `linkreach redraft` (or `linkreach redraft --job 3` for one Job): it shows each `needs_detail` Pick with its reasons and asks for one line of context, for example "spoke at Grace Hopper about AI hiring". Claude redrafts from what's already saved, with no browser and no new email lookup. A draft that passes goes through the same path as `job` (Gmail draft and `drafted` with an email, `no_email` without) and its connection note is printed; one that fails again stays `needs_detail` with the new reasons. Press Enter to skip a Pick, or `q` to stop. Your line is cleaned like profile text and fenced in the prompt; a line with a link, an email address, or instruction-like words is refused, and you're asked again.
+
+If Gmail fails for one Pick (a network error, say), the run carries on. That Pick's draft and note are saved and printed, its status doesn't move, and the failure is logged without any content. `linkreach redraft` retries the Gmail draft first, without asking anything.
+
+### Gmail drafts
+
+linkreach saves each email draft to your Gmail Drafts folder. You read, edit, and send it from Gmail yourself. It asks Google only for the `gmail.compose` scope, which allows creating drafts, and linkreach has no code that sends mail. It uses your own Google Cloud OAuth client, so no third party holds your mailbox access.
+
+One-time setup:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (or pick one) and enable the **Gmail API** (APIs & Services → Library → Gmail API → Enable).
+2. Set up the OAuth consent screen (APIs & Services → OAuth consent screen, or "Google Auth Platform"): user type **External**, any app name, your email as support and developer contact. Under **Data access** (scopes), add `https://www.googleapis.com/auth/gmail.compose`. Under **Audience**, add your own Gmail address as a test user. You can leave the app in Testing mode.
+3. Create a client: APIs & Services → Credentials → Create credentials → OAuth client ID → Application type **Desktop app**. Download its JSON file and keep it outside this repo.
+4. Run:
+
+   ```bash
+   linkreach gmail-login --client-file ~/Downloads/client_secret_XXXX.json
+   ```
+
+   Your browser opens Google's consent page. Sign in, allow "create drafts", and the tab says you're done. linkreach catches the answer on a one-time `127.0.0.1` port (with PKCE), checks that only the compose scope was granted, and stores the refresh token, with the client id and secret, in the OS keychain under service `linkreach`. The token is never written to disk, printed, or logged.
+
+While the app is in Testing mode, Google expires the sign-in after 7 days. `job` then says the Gmail sign-in expired; run `gmail-login` again. To revoke access, remove the app at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+The Gmail client uses only Python's standard library (HTTPS to `oauth2.googleapis.com` and `gmail.googleapis.com`), so no dependency was added.
 
 **Tracking progress.** linkreach never sends, so you record what you did yourself, per Pick:
 
@@ -138,6 +165,7 @@ linkreach sync                # connect_mode: automated only. Every few days: ma
 linkreach dashboard           # http://127.0.0.1:8765, opens in your browser
 linkreach mark 42 emailed     # Pick 42: emailed | connected | replied | meeting | referral | dead
 linkreach list --job 3 --status no_email
+linkreach redraft             # add context to needs_detail Picks and redraft; retry failed Gmail drafts
 linkreach export              # linkreach_export.csv
 linkreach purge --older-than 180d
 ```
@@ -204,7 +232,7 @@ Keep the default "Run only when user is logged on" so Chrome can open a window.
 
 **Dashboard.** Bound to `127.0.0.1:8765`. Requests with a Host header other than `127.0.0.1:8765` or `localhost:8765` get 403 (DNS rebinding). A random 32-byte token is created at each start and passed in the URL fragment, which browsers never send to the server. Every `/api` call must carry it in `X-Linkreach-Token`. No CORS headers. State changes are POST only. All data renders through `textContent`. CSP is `default-src 'self'` plus a per-launch nonce for the page's single inline `<script>` and `<style>` block (the spec asks for both a one-file page and `default-src 'self'`; the nonce lets both hold without `unsafe-inline`).
 
-**Secrets.** API key from the keychain (or no key at all with `llm_backend: claude_code`, which uses Claude Code's own sign-in). Logs are JSON, rotate at 10 MB × 5, and pass through a redaction filter that scrubs API keys, cookies, the dashboard token, and any note/follow-up/message field. Code never logs message bodies in the first place.
+**Secrets.** API key from the keychain (or no key at all with `llm_backend: claude_code`, which uses Claude Code's own sign-in). The Gmail refresh token lives only in the keychain too, and access tokens only in memory. Logs are JSON, rotate at 10 MB × 5, and pass through a redaction filter that scrubs API keys, cookies, the dashboard token, and any note/follow-up/message field. Code never logs message bodies in the first place.
 
 **Data at rest.** Everything private lives in `~/.linkreach/` (override with `LINKREACH_HOME`): folder 700, files 600. On Windows, `chmod` only toggles read-only. The folder sits inside your user profile, which Windows already restricts to your account, and BitLocker covers the rest.
 
@@ -243,7 +271,7 @@ The tests use a fake browser (`tests/fakes.py`) and a fake Claude client (plus a
 ## Where this goes beyond the spec
 
 - **Extra `people` columns:** `user_detail` (your one-line context from review), `validation_errors`, `send_attempted_at` (duplicate-send guard), `updated_at`.
-- **Extra commands:** `init`, `login`, `set-key`, `list`.
+- **Extra commands:** `init`, `login`, `set-key`, `gmail-login`, `redraft`, `list`.
 - **Searches:** LinkedIn's People tab now ignores `?keywords=`, so `collect` reads the company's numeric id from that tab (one page view, then cached in the database for 90 days) and searches `/search/results/people/?keywords=…&currentCompany=["<id>"]`, which is current employees only. With `combine_keywords: true`, each bucket costs one page view (`"a" OR "b"`) instead of one per keyword. An alumni pass (keyword = `alumni_school`) runs first for each company.
 - **Bucket shares:** `per_company_limit` is split across buckets in config order (6 over 4 buckets is 2, 2, 1, 1), so one role can't take every slot at a company. A bucket that finds fewer people than its share passes the spare slots to the next bucket in the same run. The alumni pass draws from the same shares, so alumni go first within each bucket. A search whose bucket (or company) is already full is skipped without a page view, and `collect --dry-run` shows each company's shares.
 - **Approval** happens in `review` or the dashboard's Review tab. Both run the same server-side validation, and the generic status dropdown still can't set `approved`.

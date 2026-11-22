@@ -14,7 +14,7 @@ from linkreach.commands.common import EXIT_CONFIG, EXIT_OK, EXIT_STOPPED
 from linkreach.emailfinder import FinderResult
 
 from tests.conftest import EXAMPLES, base_session, use_config
-from tests.fakes import GOOD_EMAIL, RESUME, FakeClaude, captcha_page, job_responder
+from tests.fakes import GOOD_EMAIL, RESUME, FakeClaude, FakeGmail, captcha_page, job_responder
 from tests.helpers import profile_for, url
 
 JD = ["Product Manager II, Azure Core", "Microsoft is hiring a PM to own onboarding.", "Redmond, WA", "END"]
@@ -85,8 +85,9 @@ def test_happy_path_saves_job_picks_and_prints_notes(env, capsys):
     out = capsys.readouterr().out
     assert url("jane-doe") in out and url("raj-k") in out
     assert out.count(GOOD_EMAIL["connection_note"]) == 2
-    assert "Picks 2, drafts 2, failures 0," in out
+    assert "Picks 2, drafts 2, Gmail drafts 0, needs detail 0, failures 0," in out
     assert "page views used 2" in out
+    assert ctx.gmail.drafts == []  # no email, so no Gmail draft
 
 
 def test_style_and_profile_go_to_the_right_prompt_parts(env):
@@ -238,7 +239,7 @@ def test_injection_in_profile_never_reaches_a_saved_draft(env, capsys):
     fake = FakeClaude(job_responder(email=obey))
     assert job.run(env.ctx(s, answers=answers([url("mallory")]), claude_client=fake)) == EXIT_OK
     p = picks(env)[0]
-    assert p["status"] == "picked"  # not drafted; full needs_detail handling is ticket 06
+    assert p["status"] == "needs_detail"
     assert p["connection_note"] is None and p["email_body"] is None
     assert "URL other than resume_url" in p["validation_errors"]
     assert len(fake.calls_for("email")) == 3
@@ -246,8 +247,8 @@ def test_injection_in_profile_never_reaches_a_saved_draft(env, capsys):
         assert "evil.example" not in kw["messages"][0]["content"]
         assert "Ignore previous" not in kw["messages"][0]["content"]
     out = capsys.readouterr().out
-    assert "Picks 1, drafts 0, failures 1," in out
-    assert "evil.example" not in out.split("Connection notes", 1)[1].split("no draft:", 1)[0]
+    assert "Picks 1, drafts 0, Gmail drafts 0, needs detail 1, failures 0," in out
+    assert "evil.example" not in out.split("Connection notes", 1)[1].split("needs detail:", 1)[0]
 
 
 def test_failed_validation_retries_with_reasons_then_succeeds(env):
@@ -268,7 +269,7 @@ def test_note_limit_is_configurable(env):
     fake = FakeClaude(job_responder())  # GOOD_EMAIL's note is longer than 100
     job.run(env.ctx(s, answers=answers([url("jane-doe")]), claude_client=fake))
     p = picks(env)[0]
-    assert p["status"] == "picked" and "note is" in p["validation_errors"]
+    assert p["status"] == "needs_detail" and "note is" in p["validation_errors"]
     assert "connection_note at most 100 characters" in fake.calls_for("email")[0]["messages"][0]["content"]
 
 
@@ -313,7 +314,7 @@ def test_captcha_stops_the_run_and_keeps_progress(env, capsys):
     assert any(r["event"] == "captcha" for r in env.db.activity())
     out = capsys.readouterr().out
     assert "STOPPED" in out
-    assert "Picks 3, drafts 1, failures 0, not reached 2" in out
+    assert "Picks 3, drafts 1, Gmail drafts 0, needs detail 0, failures 0, not reached 2" in out
 
 
 def test_view_cap_reached_mid_run(env, capsys):
@@ -381,6 +382,7 @@ def test_job_runs_without_the_csv_files(env, monkeypatch):
         "sleep": lambda x: None,
         "input_fn": _queue(answers([url("jane-doe")])),
         "claude_client": FakeClaude(job_responder()),
+        "gmail": FakeGmail(),
     }
     assert cli.main(["job"], ctx_overrides=overrides) == EXIT_OK
 

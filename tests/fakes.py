@@ -294,6 +294,24 @@ class FakeClaude:
         return [kw for kw in self.calls if request_kind(kw) == kind]
 
 
+# ---------------- fake Gmail ----------------
+class FakeGmail:
+    """Records every draft it's asked to create. `fail_for` holds recipient addresses whose
+    draft raises a GmailError, to test one Pick's Gmail failure."""
+
+    def __init__(self, fail_for: set[str] | None = None):
+        self.drafts: list[tuple[str, str, str]] = []  # (to, subject, body)
+        self.fail_for = set(fail_for or ())
+
+    def create_draft(self, to: str, subject: str, body: str) -> str:
+        from linkreach.gmail import GmailError
+
+        if to in self.fail_for:
+            raise GmailError("Google returned HTTP 503 (UNAVAILABLE)")
+        self.drafts.append((to, subject, body))
+        return f"draft-{len(self.drafts)}"
+
+
 # ---------------- fake Claude for the Job flow ----------------
 RESUME = "https://example.com/naveen-resume.pdf"  # conftest's resume_url
 

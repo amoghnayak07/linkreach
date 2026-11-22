@@ -1,4 +1,4 @@
-"""Small commands: mark, list, export, purge, init, login, set-key.
+"""Small commands: mark, list, export, purge, init, login, set-key, gmail-login.
 
 `mark` and `list` work on Picks (`mark_pick`, `list_picks`). The person-level `mark` and
 `list_people` stay for the dormant connection-request path (ADR-0001)."""
@@ -9,7 +9,9 @@ import csv
 import getpass
 import re
 import shutil
+import webbrowser
 from pathlib import Path
+from typing import Any, Callable
 
 from rich.markup import escape
 from rich.table import Table
@@ -170,6 +172,32 @@ def set_key() -> int:
         console.print(f"[red]Could not store in the OS keychain ({type(exc).__name__}). Use a .env file instead.[/]")
         return 1
     console.print("Stored in the OS keychain under service 'linkreach'.")
+    return 0
+
+
+def gmail_login(client_file: Path, open_browser: Callable[[str], Any] | None = None) -> int:
+    """`linkreach gmail-login`: sign in to Gmail with the user's own OAuth desktop client,
+    compose scope only; the refresh token goes to the OS keychain and nowhere else."""
+    from linkreach import gmail
+
+    def show_and_open(url: str) -> None:
+        console.print("Opening Google's sign-in page in your browser. If it doesn't open, copy this link into it:")
+        console.print(url, soft_wrap=True, markup=False)
+        (open_browser or webbrowser.open)(url)
+
+    console.print(
+        "linkreach asks only for the gmail.compose scope: it can create drafts in your Gmail, "
+        "and it never sends them. You review and send each draft yourself."
+    )
+    try:
+        gmail.login(client_file, show_and_open)
+    except gmail.LoginError as exc:
+        console.print(f"[red]Gmail sign-in failed: {escape(str(exc))}[/]")
+        return 1
+    except Exception as exc:  # keychain unavailable, etc.
+        console.print(f"[red]Couldn't store the Gmail sign-in in the OS keychain ({type(exc).__name__}).[/]")
+        return 1
+    console.print("[green]Gmail signed in.[/] The sign-in is stored in the OS keychain under service 'linkreach'.")
     return 0
 
 
