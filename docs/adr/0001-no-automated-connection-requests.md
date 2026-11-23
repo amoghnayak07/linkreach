@@ -1,3 +1,5 @@
-# linkreach stops sending connection requests, but keeps the code
+# linkreach doesn't send connection requests
 
-linkreach now only presents and stores Connection notes; the user sends every request themselves. Automated sending (the `send` command, connect selectors, the acceptance brake, request caps, `send_attempted_at`) is the biggest LinkedIn account risk, so it's switched off by a `connect_mode: manual` default rather than deleted, because the user wants it available if a safer route turns up. The dormant code isn't updated as the data model changes, so reviving it later means bringing it up to date first.
+linkreach only presents and stores Connection notes; the user sends every request themselves. Automated sending is the biggest LinkedIn account risk.
+
+The automated path was first kept but switched off (`connect_mode: manual`) in case a safer route turned up. When the CLI was replaced by the web app (ADR-0005), it was deleted instead: the `send` and `sync` commands, the connect selectors, the acceptance brake, request caps and `send_attempted_at`. Dormant code that isn't kept up to date is a risk if it's switched back on by accident, and reviving it would have meant rewriting it anyway. The Connection notes view has a "sent" checkbox the user ticks by hand.

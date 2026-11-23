@@ -2,6 +2,8 @@
 
 Status: ready-for-agent
 
+> Partly superseded by `.scratch/local-llm-web/spec.md`: the CLI, Claude drafting, SQLite, the Style file and `resume_url` are replaced. The open issues 08, 09 and 10 are replaced by local-llm-web issues 10 and 05. The domain rules here still apply unless that spec changes them.
+
 ## Problem Statement
 
 I'm job hunting, and linkreach today works the wrong way round for me. It starts from a list of companies, collects people in bulk by keyword bucket, drafts LinkedIn notes, and then automates sending connection requests. But I already know which company I want: I've found a specific role. What I need is, for *that* job, the handful of decision-makers worth contacting, their work emails, and a well-written email and connection note for each, in my own voice, that I can review and send myself.
